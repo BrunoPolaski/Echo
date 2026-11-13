@@ -29,6 +29,7 @@ fn quiet_segment_results_preserve_speech_and_ordered_nonempty_partials() {
             ),
             ("silent tail", 1, Err(silence), 1, 2, vec![0]),
         ] {
+            let quiet_is_ok = outcome.is_ok();
             let jobs = TranscriptionJobs::default();
             let published = Arc::new(Mutex::new(Vec::new()));
             let provider = Arc::new(FakeProvider {
@@ -72,12 +73,20 @@ fn quiet_segment_results_preserve_speech_and_ordered_nonempty_partials() {
             let expected_ms: u128 = (0..count)
                 .map(|ordinal| u128::from(120 - u64::from(ordinal) * 30))
                 .sum();
-            assert!(
-                (expected_ms..=expected_ms + 30).contains(&result.provider.provider_ms),
-                "{name}: aggregate provider time must be {expected_ms}..={}, observed {}",
-                expected_ms + 30,
-                result.provider.provider_ms
-            );
+            if quiet_is_ok {
+                // Every piece reports its fixture time, so the sum is exact.
+                assert_eq!(result.provider.provider_ms, expected_ms, "{name}");
+            } else {
+                // A failed quiet piece adds its wall-clock time, so a loaded
+                // runner can push it past the fixture delay. The slack allows one
+                // late piece; the exact case above catches double counting.
+                let max_ms = expected_ms + 200;
+                assert!(
+                    (expected_ms..=max_ms).contains(&result.provider.provider_ms),
+                    "{name}: aggregate provider time must be {expected_ms}..={max_ms}, observed {}",
+                    result.provider.provider_ms
+                );
+            }
         }
     });
 }

@@ -33,3 +33,10 @@ updates:
     groups:
       github-actions:
         patterns: ["*"]
+  # zizmor, pinned by version and wheel hash for the CI workflow audit.
+  - package-ecosystem: pip
+    directory: /.github/zizmor
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7

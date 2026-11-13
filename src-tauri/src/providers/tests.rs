@@ -74,6 +74,9 @@ fn production_client_ignores_system_proxies() {
         for (listener, is_proxy) in [(&origin, false), (&proxy, true)] {
             match listener.accept() {
                 Ok((mut stream, _)) => {
+                    // On macOS an accepted socket inherits the listener's
+                    // non-blocking mode; reads must block until the request lands.
+                    stream.set_nonblocking(false).unwrap();
                     stream
                         .set_read_timeout(Some(Duration::from_secs(1)))
                         .unwrap();

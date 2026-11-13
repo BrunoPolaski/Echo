@@ -110,6 +110,15 @@ CI uploads no package artifact and publishes no release. Its Windows build check
 
 Gitleaks scans full fetched history on manual runs; its pull request range scan applies only if the pull request trigger is restored. It redacts detected values. The workflow token has only `contents: read`, and pull requests need no repository secrets. Bun downloads and Cargo dependencies and build outputs are cached; superseded runs are cancelled.
 
+A zizmor job, pinned by version and wheel hash in [.github/zizmor/requirements.txt](../.github/zizmor/requirements.txt) and kept current by Dependabot, audits the workflows for template injection, dangerous triggers, cache poisoning, unpinned and impostor actions and credential persistence. The repository allows only GitHub-owned actions and `oven-sh/setup-bun`, and requires every action to be pinned to a full commit SHA; a new third-party action must be added to that allow-list first.
+
+Workflow rules that keep this repository safe to accept outside pull requests:
+
+- Do not add `pull_request_target`, `workflow_run`, `issue_comment` or `issues` triggers. Use `pull_request` if automatic runs are restored.
+- Do not run an AI agent with shell or write tools on issue, pull request or comment text.
+- Pass untrusted values such as titles and branch names to `run:` through `env:`, quoted; never expand them with `${{ }}` inside a script.
+- A future release or signing job restores no caches and requests only the permissions it needs.
+
 GitHub private vulnerability reporting, secret scanning and push protection are enabled on the repository, so the channel in [SECURITY](../SECURITY.md#report-a-vulnerability) is available. [.github/CODEOWNERS](../.github/CODEOWNERS) names the repository owner for ownership review.
 
 ## Dependency policy
@@ -121,7 +130,7 @@ bun scripts/verify-dependency-age.ts --base <reviewed-base-commit>
 bun scripts/verify-dependency-age.ts --full
 ```
 
-Manual workflow runs perform the full age audit; compare a change against its base locally with `--base`. [Dependabot](../.github/dependabot.yml) checks npm, Cargo and GitHub Actions monthly and opens one grouped pull request per ecosystem, with a seven-day cooldown for version updates. CI still applies the 72-hour gate to security updates. Compatible updates stay within the approved version families; major migrations need separate review.
+Manual workflow runs perform the full age audit; compare a change against its base locally with `--base`. [Dependabot](../.github/dependabot.yml) checks npm, Cargo, GitHub Actions and the pinned zizmor wheel monthly and opens one grouped pull request per ecosystem, with a seven-day cooldown for version updates. CI still applies the 72-hour gate to security updates. Compatible updates stay within the approved version families; major migrations need separate review.
 
 CI uses `bun audit --audit-level=moderate`: moderate, high and critical npm advisories block it. From `src-tauri`, run `cargo deny --locked --config deny.toml check` for advisories, licenses, duplicate versions and dependency sources. [SECURITY](../SECURITY.md#accepted-dependency-exceptions) records accepted exceptions and their rationale. The Cargo policy lives in [deny.toml](../src-tauri/deny.toml).
 
