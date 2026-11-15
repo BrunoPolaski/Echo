@@ -1205,9 +1205,14 @@ fn read_http_request(stream: &mut impl Read) -> Vec<u8> {
     let mut request = Vec::new();
     let mut buffer = [0_u8; 4096];
     loop {
-        let Ok(read) = stream.read(&mut buffer) else {
-            break;
-        };
+        // A read error is never the end of a request: a non-blocking socket or a stalled
+        // client must fail the test here, not hand an empty request to its assertions.
+        let read = stream.read(&mut buffer).unwrap_or_else(|error| {
+            panic!(
+                "test HTTP server read failed after {} bytes: {error}",
+                request.len()
+            )
+        });
         if read == 0 {
             break;
         }
@@ -1646,4 +1651,16 @@ fn mistral_adapter_sends_context_bias_and_omits_non_two_letter_language(
         assert!(!received.contains("name=\"language\""));
     }
     assert!(!received.contains("name=\"prompt\""));
+}
+
+#[test]
+#[should_panic(expected = "test HTTP server read failed after 0 bytes")]
+fn test_http_server_fails_on_a_read_error() {
+    struct WouldBlock;
+    impl Read for WouldBlock {
+        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::ErrorKind::WouldBlock.into())
+        }
+    }
+    read_http_request(&mut WouldBlock);
 }

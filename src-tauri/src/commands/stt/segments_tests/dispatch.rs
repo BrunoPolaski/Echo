@@ -77,9 +77,10 @@ fn quiet_segment_results_preserve_speech_and_ordered_nonempty_partials() {
                 // Every piece reports its fixture time, so the sum is exact.
                 assert_eq!(result.provider.provider_ms, expected_ms, "{name}");
             } else {
-                // A failed quiet piece adds its wall-clock time, so a loaded
-                // runner can push it past the fixture delay. The slack allows one
-                // late piece; the exact case above catches double counting.
+                // A failed quiet piece adds its wall-clock time (see `provider_ms` in
+                // services/dictation.rs), so a loaded runner can push it past the
+                // fixture delay. The slack allows one late piece; the exact case
+                // above catches double counting.
                 let max_ms = expected_ms + 200;
                 assert!(
                     (expected_ms..=max_ms).contains(&result.provider.provider_ms),

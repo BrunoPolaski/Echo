@@ -200,6 +200,9 @@ struct SegmentState {
     job: Option<ActiveJob>,
     error: Option<SttJobError>,
     failures: BTreeSet<u32>,
+    /// Wall time spent in provider requests, summed over pieces, retries and fallback.
+    /// A successful attempt adds the provider's own request timer; a failed or quiet
+    /// attempt adds the time measured around the call, so it includes call overhead.
     provider_ms: u128,
     credential_rejected: bool,
     results: BTreeMap<u32, TranscriptionResult>,
@@ -400,6 +403,7 @@ impl SegmentedDictation {
             );
             {
                 let mut state = self.state.lock().expect("dictation state lock");
+                // Failed and quiet attempts report no provider timer; count the call's wall time.
                 state.provider_ms += match &result {
                     Some(Ok(result)) => result.provider_ms,
                     _ => started.elapsed().as_millis(),
