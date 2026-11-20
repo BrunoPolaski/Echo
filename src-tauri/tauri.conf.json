@@ -76,7 +76,8 @@
     },
     "macOS": {
       "hardenedRuntime": true,
-      "entitlements": "./Entitlements.plist"
+      "entitlements": "./Entitlements.plist",
+      "minimumSystemVersion": "13.3"
     }
   }
 }

@@ -13,7 +13,7 @@ Future screenshot: `docs/images/echo.png`. No screenshot is included yet.
 
 Both source-build recipes include prerequisites, pinned toolchains and commands. Packaged microphone, shortcut and paste behavior still needs [physical acceptance](docs/development.md#physical-acceptance).
 
-Runtime requirements: macOS WebKit 16.4 or later, or Windows WebView2 evergreen.
+Runtime requirements: macOS 13.3 or later, which ships WebKit 16.4, or Windows WebView2 evergreen. The packaged Mac app declares macOS 13.3 as its minimum, so an older macOS refuses to open it.
 
 ## Quick start
 

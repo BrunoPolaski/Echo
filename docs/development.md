@@ -17,7 +17,7 @@ The [toolchain verifier](../scripts/verify-toolchain.ts) checks the installed ve
 
 The frontend uses SvelteKit 3, adapter-static 4, vite-plugin-svelte 7, Svelte 5, TypeScript 6 and Vite exactly 8.3.6. [vite.config.ts](../vite.config.ts) owns preprocessing, the static index fallback and disabled scheduled version polling. [package.json](../package.json) supplies native `#lib/*` imports with explicit source extensions; no test alias resolver is needed.
 
-The explicit build target is Chrome 111, Edge 111, Firefox 114 and Safari 16.4. Supported desktop webviews are macOS WebKit 16.4 or later and Windows WebView2 evergreen.
+The explicit build target is Chrome 111, Edge 111, Firefox 114 and Safari 16.4. Supported desktop webviews are macOS WebKit 16.4 or later and Windows WebView2 evergreen. WebKit 16.4 ships with macOS 13.3, so the packaged Mac app needs macOS 13.3 or later; `bundle.macOS.minimumSystemVersion` in [tauri.conf.json](../src-tauri/tauri.conf.json) writes that minimum to `LSMinimumSystemVersion` in the app's `Info.plist`.
 
 ## Before you run a build
 
