@@ -8,10 +8,10 @@ Future screenshot: `docs/images/echo.png`. No screenshot is included yet.
 
 ## Install
 
-- **macOS:** release downloads are planned. No published or notarized package is offered here yet. Use the [macOS source-build recipe](docs/development.md#macos-source-build).
+- **macOS:** download [Echo-macos.dmg](https://github.com/alegsm/Echo/releases/latest/download/Echo-macos.dmg) from the [latest release](https://github.com/alegsm/Echo/releases/latest), open it and drag Echo to Applications. It runs on Apple Silicon Macs with macOS 13.3 or later, and it is signed with a Developer ID certificate and notarized by Apple. [SHA256SUMS.txt](https://github.com/alegsm/Echo/releases/latest/download/SHA256SUMS.txt) lists the SHA-256 of each release file. To build Echo yourself, use the [macOS source-build recipe](docs/development.md#macos-source-build).
 - **Windows:** build from source with the [Windows source-build recipe](docs/development.md#windows-source-build). No Windows release download is offered here.
 
-Both recipes include prerequisites, pinned toolchains and commands. Packaged microphone, shortcut and paste behavior still needs [physical acceptance](docs/development.md#physical-acceptance).
+Both source-build recipes include prerequisites, pinned toolchains and commands. Packaged microphone, shortcut and paste behavior still needs [physical acceptance](docs/development.md#physical-acceptance).
 
 Runtime requirements: macOS WebKit 16.4 or later, or Windows WebView2 evergreen.
 
