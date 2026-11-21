@@ -110,10 +110,25 @@ pub fn position_overlay(
     source_cell_offset: tauri::LogicalPosition<f64>,
 ) -> Result<(), String> {
     super::window_authorization::require_overlay(&window)?;
-    if !keep_cell {
-        return place_at_bottom_center(&window, width, height, bottom_gap, None);
-    }
-    let monitor = overlay_monitor(&window)?;
+    let placed = if keep_cell {
+        place_in_preserved_cell(&window, width, height, source_cell_offset)
+    } else {
+        place_at_bottom_center(&window, width, height, bottom_gap, None)
+    };
+    // Placement runs when the overlay changes shape (preview text, notices, expansion), while
+    // it must stay visible above the app the user is typing into. Capture start re-raises it
+    // separately in `start_audio_capture`.
+    keep_on_top(&window);
+    placed
+}
+
+fn place_in_preserved_cell(
+    window: &tauri::WebviewWindow,
+    width: f64,
+    height: f64,
+    source_cell_offset: tauri::LogicalPosition<f64>,
+) -> Result<(), String> {
+    let monitor = overlay_monitor(window)?;
     let position = cell_preserving_position(
         monitor.work_area(),
         monitor.scale_factor(),
@@ -125,6 +140,26 @@ pub fn position_overlay(
     window
         .set_position(position)
         .map_err(|error| error.to_string())
+}
+
+/// Re-asserts the overlay's topmost z-order on Windows without activating it.
+///
+/// tao applies `HWND_TOPMOST` only when its always-on-top flag changes, so after a demotion, or
+/// once a later topmost window has risen above the overlay, `set_always_on_top(true)` is a
+/// no-op. macOS keeps its window level and needs nothing here.
+pub fn keep_on_top(window: &tauri::WebviewWindow) {
+    #[cfg(target_os = "windows")]
+    {
+        let raised = window
+            .hwnd()
+            .map_err(|error| error.to_string())
+            .and_then(|handle| crate::platform::raise_to_topmost(handle.0));
+        if let Err(error) = raised {
+            log::warn!("Could not keep the overlay above other windows: {error}");
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = window;
 }
 
 #[cfg(test)]

@@ -45,6 +45,9 @@ pub async fn start_audio_capture(
     capture: State<'_, DesktopAudioCapture>,
 ) -> Result<CaptureSessionMetadata, CaptureError> {
     let pending = prepare_capture(&request, &window, &capture)?;
+    // Only the overlay may start push-to-talk, so `window` is the overlay here. Its shape is
+    // still compact at capture start, so no `position_overlay` call re-raises it yet.
+    super::overlay_position::keep_on_top(&window);
     authorize_capture(&pending, &capture).await?;
     begin_capture(pending, &capture).await
 }

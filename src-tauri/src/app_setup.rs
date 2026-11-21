@@ -140,6 +140,7 @@ fn configure_overlay(app: &tauri::App, audio_capture: &DesktopAudioCapture) {
     {
         log::warn!("Could not place overlay at startup: {error}");
     }
+    commands::overlay_position::keep_on_top(&overlay);
     let app_handle = app.handle().clone();
     let capture = audio_capture.clone();
     let jobs = app.state::<TranscriptionJobs>().inner().clone();

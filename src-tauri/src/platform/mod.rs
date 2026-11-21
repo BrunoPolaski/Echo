@@ -26,6 +26,8 @@ mod windows_input;
 pub type NativeModifierMonitor = selected_platform::NativeModifierMonitor;
 #[cfg(target_os = "windows")]
 pub use windows::window_icon::WindowIcons;
+#[cfg(target_os = "windows")]
+pub use windows::window_topmost::raise_to_topmost;
 
 pub fn microphone_permission_status() -> String {
     selected_platform::microphone_permission_status()
