@@ -4,12 +4,14 @@ Echo is an [MIT-licensed](LICENSE) desktop dictation app for macOS and Windows. 
 
 Hold Fn on macOS or Control+Windows on Windows to record. Release to finish. For hands-free recording, tap once to start, then tap again to finish. Settings also offers a configurable shortcut.
 
-Future screenshot: `docs/images/echo.png`. No screenshot is included yet.
+![Echo's History page: copy the latest transcript, keep history for 90 days, scroll, then delete one transcript after confirming.](docs/images/dashboard.gif)
+
+The recordings on this page show Echo's dashboard with sample data.
 
 ## Install
 
 - **macOS:** download [Echo-macos.dmg](https://github.com/alegsm/Echo/releases/latest/download/Echo-macos.dmg) from the [latest release](https://github.com/alegsm/Echo/releases/latest), open it and drag Echo to Applications. It runs on Apple Silicon Macs with macOS 13.3 or later, and it is signed with a Developer ID certificate and notarized by Apple. [SHA256SUMS.txt](https://github.com/alegsm/Echo/releases/latest/download/SHA256SUMS.txt) lists the SHA-256 of each release file. To build Echo yourself, use the [macOS source-build recipe](docs/development.md#macos-source-build).
-- **Windows:** build from source with the [Windows source-build recipe](docs/development.md#windows-source-build). No Windows release download is offered here.
+- **Windows:** download [Echo-windows-setup.exe](https://github.com/alegsm/Echo/releases/latest/download/Echo-windows-setup.exe) from the [latest release](https://github.com/alegsm/Echo/releases/latest) and run it. It runs on Windows 10 or 11 on x64. The installer is not Authenticode-signed, so Windows SmartScreen may show "Windows protected your PC". If it does, select **More info**, then **Run anyway**. To build Echo yourself, use the [Windows source-build recipe](docs/development.md#windows-source-build).
 
 Both source-build recipes include prerequisites, pinned toolchains and commands. Packaged microphone, shortcut and paste behavior still needs [physical acceptance](docs/development.md#physical-acceptance).
 
@@ -27,7 +29,11 @@ In the final minute before the ten-minute recording limit, the overlay shows a c
 
 Settings controls language, custom prompts, automatic paste, clipboard restoration, Debug log, keeping Echo running when the dashboard closes and starting Echo at login. Phrasebook lets you add, search and remove spelling terms. Terms bias recognition on all providers; they do not guarantee a spelling. Custom prompts apply only to Groq and OpenAI.
 
+![Echo's Phrasebook page: add a spelling term, search the list, then remove a term.](docs/images/phrasebook.gif)
+
 By default, closing the dashboard quits Echo. To keep dictating after you close it, turn on **Keep Echo running when the dashboard closes** in Settings > Background. Closing the dashboard then hides it, and the shortcut, overlay and transcription keep working while an icon shows in the macOS menu bar or the Windows notification area. On macOS, Echo also leaves the Dock and Cmd+Tab while the dashboard is hidden, so the Dock menu cannot quit it by accident; it returns to the Dock when the dashboard opens. To bring the dashboard back, choose **Open Echo** from the icon's menu, left-click the icon on Windows, or start Echo again. To quit while it runs in the background, choose **Quit Echo** from the icon's menu. On macOS, Cmd+Q and the Dock icon's Quit work only while the dashboard is open, and they quit Echo completely. **Start Echo at login** adds a per-user login item. After you sign in, Echo then starts with the dashboard hidden if background mode is on, and with the dashboard open if it is off. The [development guide](docs/development.md#background-mode) lists what to check on a packaged build.
+
+![Settings > Background: turn on Keep Echo running when the dashboard closes and Start Echo at login, then turn both off.](docs/images/background.gif)
 
 When a newer release of Echo is published, a download icon button named "Update Echo to v<version>" appears beside the version at the bottom of the sidebar, and while background mode is on the icon's menu adds **Update Echo**. Either one downloads the release, verifies its signature, waits until no dictation is running, installs it and restarts Echo. The button shows download progress and says when the install waits for a dictation to end; after a failure it reads "Update failed. Try again", and selecting it tries again. Nothing installs until you ask. Echo never installs an older version or a prerelease.
 
@@ -47,6 +53,8 @@ Echo offers one code-defined model per provider. These model names come from [th
 | ElevenLabs | `scribe_v2` |
 | Deepgram | `nova-3` |
 | Mistral | `voxtral-mini-transcribe-3-0` |
+
+![Settings > Provider: switch between providers, each showing its one model, then select Check key.](docs/images/providers.gif)
 
 Echo reads saved keys from the OS credential store when you explicitly find or check a saved key, or transcribe. Configured indicators use non-secret saved-key metadata, so they do not prove that an OS item still exists or that a key works. Dashboard load and settings refresh do not inspect saved secrets. Check key reports whether the configured credential worked at the time of the check; provider network access and account limits still apply to later dictations.
 
