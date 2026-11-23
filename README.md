@@ -2,11 +2,13 @@
 
 Echo is an [MIT-licensed](LICENSE) desktop dictation app for macOS and Windows. Speak into a focused text field, then review the transcript in History. Echo uses your API key to send recorded audio to your selected transcription provider.
 
+![An illustration of a dictation: Echo's overlay listens, shows the words as a live preview, then the sentence is pasted into the focused app.](docs/images/dictation.gif)
+
 Hold Fn on macOS or Control+Windows on Windows to record. Release to finish. For hands-free recording, tap once to start, then tap again to finish. Settings also offers a configurable shortcut.
 
 ![Echo's History page: copy the latest transcript, keep history for 90 days, scroll, then delete one transcript after confirming.](docs/images/dashboard.gif)
 
-The recordings on this page show Echo's dashboard with sample data.
+The first animation is an illustration from [echostt.app](https://echostt.app). The recordings below it show Echo's dashboard with sample data.
 
 ## Install
 
