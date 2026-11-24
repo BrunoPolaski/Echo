@@ -10,6 +10,7 @@ mod diagnostics;
 mod microphone_diagnostic_event;
 mod microphone_diagnostics;
 mod microphone_metrics;
+mod panic_log;
 mod platform;
 mod providers;
 mod services;
@@ -29,6 +30,7 @@ macro_rules! generate_echo_handlers {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    panic_log::install();
     let context = tauri::generate_context!();
     let log_directory = bounded_log::platform_log_directory(&context.config().identifier)
         .expect("Echo log directory should be available");
