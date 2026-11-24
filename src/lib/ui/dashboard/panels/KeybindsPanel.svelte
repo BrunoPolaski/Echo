@@ -1,6 +1,7 @@
 <script lang="ts">
   import { getDashboardContext } from '../context.js';
   import { createKeybindsController, type KeybindsState } from './keybinds-controller';
+  import { desktopPlatform, shortcutLabel } from './permissions-controller';
   import DashboardCard from '../layout/DashboardCard.svelte';
 
   const ctx = getDashboardContext();
@@ -8,8 +9,9 @@
   let shortcutCard = $state<HTMLElement | null>(null);
   const degraded = $derived(ctx.settings().pushToTalkShortcut === 'Control+Windows' &&
     ctx.snapshot().nativeModifierAvailable === false);
-  const fallbackShortcut = $derived(ctx.settings().fallbackShortcut?.replace(/CommandOrControl|Control/g, 'Ctrl').replace(/Super/g, 'Windows'));
-  let currentShortcut = $derived(ctx.settings().pushToTalkShortcut || 'None');
+  const isLinux = $derived(desktopPlatform(ctx.permissions()) === 'linux');
+  const fallbackShortcut = $derived(ctx.settings().fallbackShortcut?.replace(/CommandOrControl|Control/g, 'Ctrl').replace(/Super/g, isLinux ? 'Super' : 'Windows'));
+  let currentShortcut = $derived(shortcutLabel(ctx.settings().pushToTalkShortcut, desktopPlatform(ctx.permissions())));
   const { startHotkeyCapture, cancelHotkeyCapture, cancelHotkeyCaptureOutside, captureHotkey,
     savePasteAfterTranscription, saveRestoreClipboard } = createKeybindsController(ctx, viewState, {
     contains: (target) => target instanceof Node && !!shortcutCard?.contains(target),

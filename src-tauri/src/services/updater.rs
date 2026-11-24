@@ -265,6 +265,11 @@ pub fn start<R: Runtime>(app: &AppHandle<R>) {
     if cfg!(debug_assertions) {
         return;
     }
+    // Only an AppImage can replace itself; .deb and .rpm installs update through the
+    // package manager.
+    if cfg!(target_os = "linux") && std::env::var_os("APPIMAGE").is_none() {
+        return;
+    }
     let service = app.state::<UpdaterService>().inner().clone();
     let source = PluginSource::new(app.clone());
     let spawned = std::thread::Builder::new()
