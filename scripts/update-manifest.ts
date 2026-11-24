@@ -1,12 +1,13 @@
 // Writes latest.json, the manifest installed copies of Echo read to find an update.
-// Run it once both platforms' .sig files are on the GitHub release, then upload its
-// output last: a release without latest.json offers nothing, so a half-uploaded release
-// is safe. docs/development.md#publish-a-release has the full release order.
+// Releases are immutable once published, so run it with --assets on local copies of both
+// platforms' .sig files and upload its output to the draft before publishing.
+// docs/development.md#publish-a-release has the full release order.
 //
 //   bun scripts/update-manifest.ts --tag v0.5.0 [--assets <dir>] [--base-url <url>] [--config <json>] [--out <path>]
 //
-// --assets reads the .sig files from a local directory instead of fetching them from the
-// release. --base-url replaces https://github.com/alegsm/Echo/releases/download for both
+// --assets reads the .sig files from a local directory; releases use it, because a draft's
+// files have no public URL. Without it the script fetches them from a published release.
+// --base-url replaces https://github.com/alegsm/Echo/releases/download for both
 // the fetch and the manifest URLs. --config names a JSON file whose plugins.updater.pubkey
 // replaces the one in src-tauri/tauri.conf.json. The output defaults to latest.json in the
 // --assets directory, or in the current directory when fetching.
@@ -98,7 +99,8 @@ async function readSignatures(tag: string, assets: string | undefined, baseUrl: 
   const missing = (Object.keys(RELEASE_ASSETS) as UpdatePlatform[]).filter((platform) => !(platform in found));
   if (missing.length > 0) {
     const names = missing.map((platform) => `${platform} (${RELEASE_ASSETS[platform]}.sig)`).join(', ');
-    throw new Error(`The release is missing the signature for ${names}. Upload it, then run this again.`);
+    const where = assets ? `${assets} is` : 'The release is';
+    throw new Error(`${where} missing the signature for ${names}. Add it, then run this again.`);
   }
   return found as Record<UpdatePlatform, string>;
 }
@@ -158,7 +160,7 @@ export async function writeReleaseManifest(argv: string[]): Promise<string> {
 if (import.meta.main) {
   try {
     const out = await writeReleaseManifest(process.argv.slice(2));
-    console.log(`Wrote ${out}. Upload it to the release last.`);
+    console.log(`Wrote ${out}. Upload it to the draft release before publishing.`);
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
