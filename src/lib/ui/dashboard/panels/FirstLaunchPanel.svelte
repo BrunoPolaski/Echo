@@ -17,7 +17,7 @@
   const ctx = getDashboardContext();
   let permissionIntro = $derived({
     windows: 'Give Echo access to your microphone.',
-    linux: 'Linux needs no extra permissions for Echo.'
+    linux: 'Linux shows no permission prompts. On Wayland, Control+Super needs your user in the input group.'
   }[desktopPlatform(ctx.permissions())] ?? 'Give Echo access to your microphone and recording shortcut.');
   const viewState = $state({ step: initial.step ?? 1 });
   const { setStep, finishSetup } = createSetupController(ctx, viewState, {

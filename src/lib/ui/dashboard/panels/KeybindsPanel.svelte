@@ -34,7 +34,7 @@
     </div>
     <div class="shortcut-help">
       {#if degraded}
-        <p role="status">Native shortcut unavailable. {#if ctx.settings().fallbackShortcut}Fallback: {fallbackShortcut}. Press once to record, then press again to transcribe.{:else}Choose another shortcut to record.{/if}</p>
+        <p role="status">Native shortcut unavailable. {#if isLinux}On Wayland, add your user to the input group and sign in again. {/if}{#if ctx.settings().fallbackShortcut}Fallback: {fallbackShortcut}. Press once to record, then press again to transcribe.{:else}Choose another shortcut to record.{/if}</p>
       {:else}
         <p>Hold this key to record and release to transcribe. Tap once to record hands-free, then tap again to transcribe.</p>
       {/if}

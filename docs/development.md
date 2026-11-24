@@ -230,6 +230,18 @@ Enable Debug log in Settings before reproducing capture failures. Use the [canon
 
 Measure release-to-paste time on a release build for speech across pauses and sentence continuations. The target of about two seconds for a sixty-second dictation is an acceptance target, not an automated-test guarantee. Record provider, platform, build provenance, observed results and skipped checks. Real microphone acquisition, the macOS Fn event tap, Windows hooks, permission prompts, real provider accounts and OS insertion require host evidence.
 
+### Linux
+
+Run these on an installed `.deb`, `.rpm` or AppImage, on an X11 session and on a Wayland session. Record the distribution, desktop and session type with each run.
+
+1. X11: hold Control+Super in a text editor, dictate and confirm the paste lands. Repeat in a terminal and confirm it pastes with Control+Shift+V.
+2. Wayland with the user in the `input` group and `ydotool` 1.0 or newer running: hold Control+Super, dictate and confirm the paste lands in a text editor. In a terminal the transcript stays on the clipboard for a manual Control+Shift+V.
+3. Wayland without the `input` group: Keybinds shows "Native shortcut unavailable" with the input group hint, and the fallback shortcut records while an Echo window is focused.
+4. Clipboard: after a paste with **Restore clipboard after paste** on, Control+V gives back what was copied before.
+5. Background mode, with a tray that supports app indicators (on GNOME, the AppIndicator extension): the icon appears, Open Echo shows the dashboard and Quit Echo ends the process.
+6. Start Echo at login writes `~/.config/autostart/Echo.desktop`. Sign out and in and confirm Echo starts hidden with background mode on. Turning the switch off removes the file.
+7. The app menu lists Echo under Utility, the dock or taskbar shows Echo's icon, and `/usr/bin/echo` still belongs to coreutils after a `.deb` install.
+
 ### Background mode
 
 Run these on a packaged build on each OS, started from `/Applications` or a similar folder rather than from Downloads or a disk image, and quit any development build first. The setting names are **Keep Echo running when the dashboard closes** and **Start Echo at login** in Settings > Background. The [architecture note](architecture.md#background-mode) describes the behavior behind each item.

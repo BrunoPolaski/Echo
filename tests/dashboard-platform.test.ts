@@ -140,7 +140,7 @@ test('linux renders without permission rows, with keyring copy and a Super short
   };
   const settings = { pushToTalkShortcut: 'Control+Windows', fallbackShortcut: 'CommandOrControl+Shift+Space' };
   const setup = render({ initialState: { tab: 'setup', permissions: linux, permissionCheckState: 'ready', settings } });
-  expect(setup).toContain('Linux needs no extra permissions for Echo.');
+  expect(setup).toContain('On Wayland, Control+Super needs your user in the input group.');
   expect(setup).toContain('No permissions are required on this platform.');
   expect(setup).not.toContain('grant permissions later');
   expect(setup).not.toMatch(/\d\/\d granted/);

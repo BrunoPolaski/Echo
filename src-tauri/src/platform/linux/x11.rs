@@ -48,7 +48,7 @@ const HELD_MODIFIER_KEYSYMS: [u32; 11] = [
 ];
 
 /// WM_CLASS fragments of terminals, which paste with Control+Shift+V instead of Control+V.
-const TERMINAL_CLASSES: [&str; 17] = [
+const TERMINAL_CLASSES: [&str; 18] = [
     "terminal",
     "konsole",
     "alacritty",
@@ -57,6 +57,7 @@ const TERMINAL_CLASSES: [&str; 17] = [
     "terminator",
     "wezterm",
     "foot",
+    "footclient",
     "ghostty",
     "terminology",
     "guake",
@@ -268,12 +269,22 @@ fn focused_window_is_terminal(conn: &impl Connection, root: Window) -> Option<bo
     Some(is_terminal_class(&String::from_utf8_lossy(&class)))
 }
 
+fn is_terminal_part(part: &str, terminal: &str) -> bool {
+    if terminal == "terminal" {
+        return part.contains(terminal);
+    }
+    part == terminal
+        || part
+            .strip_suffix(terminal)
+            .is_some_and(|prefix| prefix.ends_with('.'))
+}
+
 fn is_terminal_class(wm_class: &str) -> bool {
     let wm_class = wm_class.to_ascii_lowercase();
     wm_class.split('\0').any(|part| {
         TERMINAL_CLASSES
             .iter()
-            .any(|terminal| part.contains(terminal))
+            .any(|&terminal| is_terminal_part(part, terminal))
     })
 }
 
@@ -381,5 +392,9 @@ mod tests {
         ));
         assert!(!is_terminal_class("Navigator\0firefox\0"));
         assert!(!is_terminal_class("gedit\0Gedit\0"));
+        assert!(is_terminal_class("footclient\0footclient\0"));
+        assert!(is_terminal_class("org.gnome.Ptyxis\0Org.gnome.Ptyxis\0"));
+        assert!(!is_terminal_class("bigfoot\0Bigfoot\0"));
+        assert!(!is_terminal_class("kittycam\0Kittycam\0"));
     }
 }
