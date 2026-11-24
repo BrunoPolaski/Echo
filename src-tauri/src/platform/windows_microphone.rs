@@ -12,25 +12,17 @@ fn consent_status(
     }
 }
 
-fn settings_open_result(result: isize) -> Result<(), String> {
-    if result > 32 {
-        Ok(())
-    } else {
-        Err(format!(
-            "Could not open Windows microphone privacy settings (ShellExecuteW: {result})."
-        ))
-    }
-}
-
 #[cfg(target_os = "windows")]
 pub(super) use native::{open_settings, permission_status};
 
 #[cfg(target_os = "windows")]
 mod native {
     use std::ffi::c_void;
-    use std::ptr::{null, null_mut};
+    use std::ptr::null_mut;
 
-    // These two APIs use narrow declarations to avoid adding Windows features to the manifest.
+    use crate::platform::windows_shell::{shell_open, wide};
+
+    // A narrow declaration avoids adding Windows features to the manifest.
     #[link(name = "advapi32")]
     extern "system" {
         fn RegGetValueW(
@@ -44,23 +36,10 @@ mod native {
         ) -> i32;
     }
 
-    #[link(name = "shell32")]
-    extern "system" {
-        fn ShellExecuteW(
-            window: *mut c_void,
-            operation: *const u16,
-            file: *const u16,
-            parameters: *const u16,
-            directory: *const u16,
-            show: i32,
-        ) -> *mut c_void;
-    }
-
     const MICROPHONE_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone";
     const HKEY_CURRENT_USER: *mut c_void = -2_147_483_647_isize as *mut c_void;
     const HKEY_LOCAL_MACHINE: *mut c_void = -2_147_483_646_isize as *mut c_void;
     const RRF_RT_REG_SZ: u32 = 0x0000_0002;
-    const SW_SHOWNORMAL: i32 = 1;
 
     pub(crate) fn permission_status() -> String {
         let device = read_consent(HKEY_LOCAL_MACHINE, MICROPHONE_KEY);
@@ -97,25 +76,9 @@ mod native {
     }
 
     pub(crate) fn open_settings() -> Result<(), String> {
-        let operation = wide("open");
-        let uri = wide("ms-settings:privacy-microphone");
-        // SAFETY: both strings are NUL-terminated and live until ShellExecuteW returns;
-        // optional window, parameters and directory are null. The result is a status, not an owned handle.
-        let result = unsafe {
-            ShellExecuteW(
-                null_mut(),
-                operation.as_ptr(),
-                uri.as_ptr(),
-                null(),
-                null(),
-                SW_SHOWNORMAL,
-            )
-        };
-        super::settings_open_result(result as isize)
-    }
-
-    fn wide(value: &str) -> Vec<u16> {
-        value.encode_utf16().chain(Some(0)).collect()
+        shell_open("ms-settings:privacy-microphone").map_err(|result| {
+            format!("Could not open Windows microphone privacy settings (ShellExecuteW: {result}).")
+        })
     }
 }
 
@@ -162,16 +125,5 @@ mod tests {
         }
         assert_eq!(consent_status(None, None, Some("Deny")), "denied");
         assert_eq!(consent_status(Some("Deny"), None, None), "denied");
-    }
-
-    // Keep: ShellExecute's values through 32 are failures, including a null result.
-    #[test]
-    fn microphone_settings_propagates_shell_execute_failure() {
-        for result in [0, 2, 5, 31, 32] {
-            assert!(settings_open_result(result).is_err(), "{result}");
-        }
-        for result in [33, 42, isize::MAX] {
-            assert!(settings_open_result(result).is_ok(), "{result}");
-        }
     }
 }

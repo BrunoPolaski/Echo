@@ -273,7 +273,7 @@ mod tests {
             let authorized = handler.find("require_dashboard(&window)?").unwrap();
             let acted = handler
                 .find("state::<UpdaterService>")
-                .or_else(|| handler.find("request_install("))
+                .or_else(|| handler.find("request_update("))
                 .unwrap();
             assert!(authorized < acted, "{command} acts before authorization");
         }

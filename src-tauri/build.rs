@@ -42,6 +42,10 @@ fn main() {
     println!("cargo:rerun-if-changed=src");
     println!("cargo:rerun-if-changed=tauri.conf.json");
     println!("cargo:rerun-if-changed=icons");
+    println!("cargo:rustc-check-cfg=cfg(echo_update_install)");
+    if installs_updates() {
+        println!("cargo:rustc-cfg=echo_update_install");
+    }
     let manifest = tauri_build::AppManifest::new().commands(ECHO_COMMAND_NAMES);
     let attributes = tauri_build::Attributes::new().app_manifest(manifest);
     let attributes = if embeds_windows_manifest_with_linker() {
@@ -50,6 +54,16 @@ fn main() {
         attributes
     };
     tauri_build::try_build(attributes).expect("Echo Tauri configuration should build");
+}
+
+// SWITCH: the one place that decides whether Echo downloads and installs its own updates.
+// Targets listed here register the updater plugin and install releases in place; every
+// other target only offers the release page in the browser. See "Updates" in
+// docs/architecture.md. Adding `|| target_os == "windows"` re-enables the full updater on
+// Windows once its builds are code-signed.
+fn installs_updates() -> bool {
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    target_os == "macos"
 }
 
 // tauri-build embeds its Common Controls v6 manifest in binaries only, but unit-test

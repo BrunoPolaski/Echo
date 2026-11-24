@@ -207,6 +207,47 @@ fn bootstrap_opens_only_current_storage_without_restoring_other_directories() {
     cleanup(&root_path);
 }
 
+// Keep: a renderer command that reads unmanaged state panics, and inside a WebView2
+// callback that panic aborts Echo. Tauri's own startup step must build no window from
+// tauri.conf.json; create_windows builds both, and they then read the managed storage.
+// The order of the calls inside setup_application is not driven here.
+#[test]
+fn windows_are_created_only_after_startup_manages_command_state() {
+    let path = test_database("window-order");
+    let directory = path.parent().unwrap();
+    std::fs::create_dir_all(directory).unwrap();
+    let config: serde_json::Value =
+        serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+    let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+    context.config_mut().app.windows =
+        serde_json::from_value(config["app"]["windows"].clone()).unwrap();
+    let mut app = tauri::test::mock_builder()
+        .manage(EchoRuntime::default())
+        .manage(CredentialService::new(CountingStore::default()))
+        .build(context)
+        .unwrap();
+    // Runs the step in which Tauri builds every config window it is asked to create.
+    #[allow(deprecated)]
+    app.run_iteration(|_, _| {});
+    assert!(
+        app.webview_windows().is_empty(),
+        "Tauri built a window before startup managed the state its commands read"
+    );
+    let persisted = bootstrap(&app, directory).unwrap();
+    create_windows(&app).unwrap();
+    assert_eq!(app.webview_windows().len(), 2);
+    for label in ["overlay", "dashboard"] {
+        // The read get_persisted_settings makes, which found no storage and panicked.
+        let window = app.get_webview_window(label).unwrap();
+        assert_eq!(
+            window.state::<EchoStorage>().read_settings().unwrap(),
+            persisted
+        );
+    }
+    drop(app);
+    cleanup(&path);
+}
+
 // Keep: per-second progress neither advances state nor broadcasts desktop envelopes.
 #[test]
 fn progress_uses_only_the_capture_channel() {
