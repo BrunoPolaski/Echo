@@ -8,7 +8,7 @@
   import { providerOptions } from '#lib/core/settings.ts';
   import { getDashboardContext, type SettingsTab } from '../context.js';
   import { applicablePermissionKinds, desktopPlatform, shortcutLabel } from '../panels/permissions-controller';
-  import { createUpdateController, updateAnnouncement, updateBusy, updateLabel, type UpdateView } from './update-controller';
+  import { createUpdateController, updateAnnouncement, updateBusy, updateDescription, updateLabel, type UpdateView } from './update-controller';
 
   let { activeTab, onselect, motionAllowed = true }: { motionAllowed?: boolean; activeTab: SettingsTab; onselect(tab: SettingsTab): void } = $props();
   let markVisible = $state(false);
@@ -58,9 +58,10 @@
     <p><span class="sr-only">Version </span><span aria-hidden="true">v</span>{__APP_VERSION__}</p>
     {#if updateView.kind !== 'hidden'}
       {@const label = updateLabel(updateView)}
-      <button class="update-button" class:failed={updateView.kind === 'failed'} type="button" aria-label={label} title={label} aria-disabled={updateBusy(updateView) ? 'true' : undefined} onclick={() => void updates?.install()}>
+      {@const description = updateDescription(updateView)}
+      <button class="update-button" class:failed={updateView.kind === 'failed' || updateView.kind === 'download_page_failed'} type="button" aria-label={label} title={description ? `${label}. ${description}` : label} aria-describedby={description ? 'update-description' : undefined} aria-disabled={updateBusy(updateView) ? 'true' : undefined} onclick={() => void updates?.install()}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          {#if updateView.kind === 'available' || updateView.kind === 'failed'}<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19h14" />
+          {#if updateView.kind === 'available' || updateView.kind === 'failed' || updateView.kind === 'download_page' || updateView.kind === 'download_page_failed'}<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19h14" />
           {:else}
             {@const indeterminate = updateView.kind === 'downloading' && updateView.percent === null}
             <circle class="ring-track" cx="12" cy="12" r="8.5" />
@@ -68,6 +69,7 @@
           {/if}
         </svg>
       </button>
+      {#if description}<span id="update-description" class="sr-only">{description}</span>{/if}
     {/if}
     <span class="sr-only" role="status">{updateAnnouncement(updateView)}</span>
   </div>

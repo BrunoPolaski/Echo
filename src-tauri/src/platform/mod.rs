@@ -14,6 +14,8 @@ mod windows_hook_health;
 mod windows_hotkey_reducer;
 #[cfg(any(target_os = "windows", test))]
 mod windows_microphone;
+#[cfg(any(target_os = "windows", test))]
+mod windows_shell;
 
 #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 use fallback as selected_platform;
@@ -107,6 +109,19 @@ pub fn change_fn_key_preference(
     {
         let _ = (backup, action);
         Err("Fn key preferences are available only on macOS.".to_string())
+    }
+}
+
+/// Opens `url` in the default browser. Notify builds use it for the fixed download page;
+/// other targets have no opener yet.
+#[cfg_attr(echo_update_install, allow(dead_code))]
+pub fn open_url(url: &str) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    return windows_shell::shell_open(url).map_err(|result| format!("ShellExecuteW: {result}"));
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = url;
+        Err("unsupported".to_string())
     }
 }
 

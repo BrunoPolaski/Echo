@@ -10,6 +10,7 @@ mod diagnostics;
 mod microphone_diagnostic_event;
 mod microphone_diagnostics;
 mod microphone_metrics;
+mod panic_log;
 mod platform;
 mod providers;
 mod services;
@@ -54,20 +55,24 @@ pub fn run() {
     prefer_xwayland();
     #[cfg(target_os = "linux")]
     disable_webkit_dmabuf_renderer();
+    panic_log::install();
     let context = tauri::generate_context!();
     let log_directory = bounded_log::platform_log_directory(&context.config().identifier)
         .expect("Echo log directory should be available");
     let log_dispatch =
         bounded_log::dispatch(log_directory).expect("Echo log writer should initialize");
-    let application = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         // Registered first so a second launch hands off before any other plugin starts.
         // Its arguments and working directory are ignored: it can only show the dashboard.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             background_mode::show_dashboard(app)
-        }))
-        // Rust-only: no capability grants an `updater:` permission. services/updater.rs
-        // owns every check, download and install.
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        }));
+    // Only builds that install their own updates register the updater plugin (the switch is
+    // in build.rs). Rust-only: no capability grants an `updater:` permission.
+    // services/updater.rs owns every check, and on these builds every download and install.
+    #[cfg(echo_update_install)]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    let application = builder
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(log::LevelFilter::Info)

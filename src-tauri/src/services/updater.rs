@@ -1,19 +1,31 @@
 //! In-app updates. Rust owns every update request: it checks the configured endpoints at
-//! launch and once a day, and on request downloads and verifies the release, waits until
-//! Echo is idle, installs it and restarts. The dashboard reads the status and asks for the
-//! install through `commands/update.rs`; the tray offers the same install.
+//! launch and once a day. The dashboard reads the status and asks for the update through
+//! `commands/update.rs`; the tray offers the same request, and both land in
+//! [`request_update`]. What a request does depends on the build. Where build.rs sets
+//! `echo_update_install` (macOS), the `install` module downloads and verifies the release,
+//! waits until Echo is idle, installs it and restarts. Every other build (Windows, until its
+//! builds are code-signed) downloads and runs nothing: it reads only the manifest's version
+//! and opens [`DOWNLOAD_PAGE_URL`] in the browser.
 
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
-use tauri_plugin_updater::{Update, Updater, UpdaterExt};
 
-use crate::audio::DesktopAudioCapture;
 use crate::services::background_mode;
-use crate::services::runtime::{Activity, EchoRuntime};
-use crate::services::transcript_delivery;
+
+#[cfg(echo_update_install)]
+mod install;
+#[cfg(echo_update_install)]
+pub use install::ProductionPending;
+/// What an offer carries on builds that only open the download page: nothing.
+#[cfg(not(echo_update_install))]
+pub type ProductionPending = ();
+
+/// The one page a notify build opens. Compiled into Echo, never read from a manifest.
+#[cfg_attr(echo_update_install, allow(dead_code))]
+pub const DOWNLOAD_PAGE_URL: &str = "https://github.com/alegsm/Echo/releases/latest";
 
 /// Emitted to the dashboard with an [`UpdateEnvelope`] on every status change.
 pub const STATUS_EVENT: &str = "echo-update-status";
@@ -23,15 +35,11 @@ const CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 const SCHEDULE_TICK: Duration = Duration::from_secs(5 * 60);
 const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const MAX_REDIRECTS: usize = 5;
-const IDLE_POLL: Duration = Duration::from_secs(1);
-/// Covers the gap between a job completing and the renderer delivering its transcript:
-/// a manual-mode transcript never calls delivery, so only a timeout can cover it.
-const QUIET_PERIOD: Duration = Duration::from_secs(10);
-const MIB: u64 = 1024 * 1024;
 
-/// The wire status. `version` is the release's semver without a leading `v`.
+/// The wire status. `version` is the release's semver without a leading `v`. Builds that
+/// install use `available` through `failed`; notify builds use `download_page` and
+/// `download_page_failed`, the latter after the browser could not be opened.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(
     tag = "state",
@@ -40,21 +48,34 @@ const MIB: u64 = 1024 * 1024;
 )]
 pub enum UpdateStatus {
     None,
+    #[cfg_attr(not(echo_update_install), allow(dead_code))]
     Available {
         version: String,
     },
+    #[cfg_attr(not(echo_update_install), allow(dead_code))]
     Downloading {
         version: String,
         downloaded_bytes: u64,
         total_bytes: Option<u64>,
     },
+    #[cfg_attr(not(echo_update_install), allow(dead_code))]
     WaitingForIdle {
         version: String,
     },
+    #[cfg_attr(not(echo_update_install), allow(dead_code))]
     Installing {
         version: String,
     },
+    #[cfg_attr(not(echo_update_install), allow(dead_code))]
     Failed {
+        version: String,
+    },
+    #[cfg_attr(echo_update_install, allow(dead_code))]
+    DownloadPage {
+        version: String,
+    },
+    #[cfg_attr(echo_update_install, allow(dead_code))]
+    DownloadPageFailed {
         version: String,
     },
 }
@@ -66,12 +87,14 @@ pub struct UpdateEnvelope {
     pub status: UpdateStatus,
 }
 
-/// How the tray shows the Update Echo item.
+/// How the tray shows the update item: Update Echo (enabled or disabled) on builds that
+/// install, Download Echo Update on notify builds.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TrayOffer {
     Hidden,
     Enabled,
     Disabled,
+    DownloadPage,
 }
 
 pub(crate) enum CheckOutcome<P> {
@@ -80,28 +103,24 @@ pub(crate) enum CheckOutcome<P> {
     Failed(String),
 }
 
-/// Where releases come from. Production uses the Tauri updater plugin; tests use fakes.
+/// Where releases come from. Builds that install use the Tauri updater plugin, notify
+/// builds `ManifestSource`; tests use fakes. Only builds that install can download.
 pub(crate) trait UpdateSource {
     type Pending: Clone;
     fn check(&self) -> CheckOutcome<Self::Pending>;
     /// Returns the artifact only after its signature verified against the configured key.
+    #[cfg(echo_update_install)]
     fn download(
         &self,
         pending: &Self::Pending,
         on_chunk: &mut dyn FnMut(usize, Option<u64>),
     ) -> Result<Vec<u8>, String>;
     /// Installs and restarts Echo. On Windows the installer exits the process instead of returning.
+    #[cfg(echo_update_install)]
     fn install(&self, pending: &Self::Pending, bytes: &[u8]) -> Result<(), String>;
 }
 
-/// Admission to install, atomic with capture admission.
-pub(crate) trait InstallGate {
-    /// Sets the install barrier when Echo is idle; otherwise leaves it clear and returns false.
-    fn try_close(&self) -> bool;
-    fn reopen(&self);
-}
-
-pub struct UpdaterService<P = Update> {
+pub struct UpdaterService<P = ProductionPending> {
     state: Arc<Mutex<ServiceState<P>>>,
     publish: Arc<dyn Fn(&UpdateEnvelope) + Send + Sync>,
 }
@@ -119,6 +138,7 @@ struct ServiceState<P> {
     sequence: u64,
     status: UpdateStatus,
     /// The release the current offer refers to, kept after a failure so a retry downloads it again.
+    #[cfg_attr(not(echo_update_install), allow(dead_code))]
     pending: Option<P>,
     /// An install request owns the status from admission until it fails or Echo restarts.
     busy: bool,
@@ -167,6 +187,9 @@ impl<P: Clone> UpdaterService<P> {
             UpdateStatus::Downloading { .. }
             | UpdateStatus::WaitingForIdle { .. }
             | UpdateStatus::Installing { .. } => TrayOffer::Disabled,
+            UpdateStatus::DownloadPage { .. } | UpdateStatus::DownloadPageFailed { .. } => {
+                TrayOffer::DownloadPage
+            }
         }
     }
 
@@ -189,49 +212,16 @@ impl<P: Clone> UpdaterService<P> {
                 }
                 CheckOutcome::Available { version, pending } => {
                     state.pending = Some(pending);
-                    state.change(UpdateStatus::Available { version })
+                    state.change(offer(version))
                 }
             }
         };
         self.publish(changed);
     }
 
-    /// Admits one install from available or failed. Any other state ignores the request.
-    fn admit_install(&self) -> Option<(String, P)> {
-        let (admitted, changed) = {
-            let mut state = self.lock();
-            let version = match &state.status {
-                UpdateStatus::Available { version } | UpdateStatus::Failed { version }
-                    if !state.busy =>
-                {
-                    version.clone()
-                }
-                _ => return None,
-            };
-            let pending = state.pending.clone()?;
-            state.busy = true;
-            let changed = state.change(UpdateStatus::Downloading {
-                version: version.clone(),
-                downloaded_bytes: 0,
-                total_bytes: None,
-            });
-            ((version, pending), changed)
-        };
-        self.publish(changed);
-        Some(admitted)
-    }
-
+    #[cfg_attr(not(echo_update_install), allow(dead_code))]
     fn set_status(&self, status: UpdateStatus) {
         let changed = self.lock().change(status);
-        self.publish(changed);
-    }
-
-    fn fail(&self, version: String) {
-        let changed = {
-            let mut state = self.lock();
-            state.busy = false;
-            state.change(UpdateStatus::Failed { version })
-        };
         self.publish(changed);
     }
 
@@ -251,7 +241,7 @@ impl<P: Clone> UpdaterService<P> {
 /// Manages the service. Every status change is emitted to the dashboard and rebuilds the tray menu.
 pub fn manage(app: &AppHandle) {
     let handle = app.clone();
-    app.manage(UpdaterService::<Update>::new(move |envelope| {
+    app.manage(UpdaterService::<ProductionPending>::new(move |envelope| {
         if let Err(error) = handle.emit_to("dashboard", STATUS_EVENT, envelope) {
             log::warn!("Could not publish the update status: {error}");
         }
@@ -265,13 +255,15 @@ pub fn start<R: Runtime>(app: &AppHandle<R>) {
     if cfg!(debug_assertions) {
         return;
     }
-    // Only an AppImage can replace itself; .deb and .rpm installs update through the
-    // package manager.
-    if cfg!(target_os = "linux") && std::env::var_os("APPIMAGE").is_none() {
+    // No Linux release is published, so a check would offer a page with nothing to download.
+    if cfg!(target_os = "linux") {
         return;
     }
     let service = app.state::<UpdaterService>().inner().clone();
-    let source = PluginSource::new(app.clone());
+    #[cfg(echo_update_install)]
+    let source = install::PluginSource::new(app.clone());
+    #[cfg(not(echo_update_install))]
+    let source = ManifestSource::new(app.clone());
     let spawned = std::thread::Builder::new()
         .name("echo-update-schedule".to_owned())
         .spawn(move || {
@@ -290,30 +282,21 @@ pub fn tray_offer(app: &AppHandle) -> TrayOffer {
         .map_or(TrayOffer::Hidden, |service| service.tray_offer())
 }
 
-/// The sidebar button and the tray item both land here. Returns as soon as the request
-/// is admitted (status already downloading) or ignored (status unchanged).
-pub fn request_install<R: Runtime>(app: &AppHandle<R>) -> UpdateEnvelope {
-    let service = app.state::<UpdaterService>().inner().clone();
-    let Some((version, pending)) = service.admit_install() else {
-        return service.status();
-    };
-    let admitted = service.status();
-    let source = PluginSource::new(app.clone());
-    let gate = IdleGate {
-        capture: app.state::<DesktopAudioCapture>().inner().clone(),
-        runtime: app.state::<EchoRuntime>().inner().clone(),
-        deliveries: transcript_delivery::activity,
-    };
-    let worker = service.clone();
-    let failed_version = version.clone();
-    let spawned = std::thread::Builder::new()
-        .name("echo-update-install".to_owned())
-        .spawn(move || run_install(&worker, &source, &gate, IDLE_POLL, version, pending));
-    if let Err(error) = spawned {
-        log::warn!("update_install outcome=failed stage=start error={error}");
-        service.fail(failed_version);
-    }
-    admitted
+/// The sidebar button and the tray item both land here. Builds that install start the
+/// download and return once it is admitted or ignored; notify builds open the download page.
+pub fn request_update<R: Runtime>(app: &AppHandle<R>) -> UpdateEnvelope {
+    #[cfg(echo_update_install)]
+    return install::request_install(app);
+    #[cfg(not(echo_update_install))]
+    request_download_page(app)
+}
+
+/// The status a check offers: an install where Echo installs, the download page elsewhere.
+fn offer(version: String) -> UpdateStatus {
+    #[cfg(echo_update_install)]
+    return UpdateStatus::Available { version };
+    #[cfg(not(echo_update_install))]
+    UpdateStatus::DownloadPage { version }
 }
 
 pub(crate) fn check_once<S: UpdateSource>(service: &UpdaterService<S::Pending>, source: &S) {
@@ -357,210 +340,328 @@ pub(crate) fn run_schedule<S: UpdateSource>(
     }
 }
 
-/// Download, then the idle gate, then install. Any error leaves the status failed and
-/// capture admission open.
-pub(crate) fn run_install<S: UpdateSource>(
-    service: &UpdaterService<S::Pending>,
-    source: &S,
-    gate: &impl InstallGate,
-    poll: Duration,
-    version: String,
-    pending: S::Pending,
-) {
-    let mut downloaded: u64 = 0;
-    let mut published_step: Option<u64> = None;
-    let mut on_chunk = |chunk: usize, total: Option<u64>| {
-        downloaded = downloaded.saturating_add(chunk as u64);
-        // One status change per whole percent, or per MiB when the server sends no length.
-        let step = match total {
-            Some(total) if total > 0 => downloaded.saturating_mul(100) / total,
-            _ => downloaded / MIB,
-        };
-        if published_step != Some(step) {
-            published_step = Some(step);
-            service.set_status(UpdateStatus::Downloading {
-                version: version.clone(),
-                downloaded_bytes: downloaded,
-                total_bytes: total,
-            });
+/// Opens the download page in the browser through the platform shell.
+#[cfg(not(echo_update_install))]
+fn request_download_page<R: Runtime>(app: &AppHandle<R>) -> UpdateEnvelope {
+    let service = app.state::<UpdaterService>().inner().clone();
+    open_download_page(&service, crate::platform::open_url)
+}
+
+/// Opens [`DOWNLOAD_PAGE_URL`], and nothing else, from `download_page` or
+/// `download_page_failed`; any other state returns the status unchanged without calling
+/// `open`. A failure to open reads `download_page_failed`, so the dashboard shows the address.
+#[cfg(any(test, not(echo_update_install)))]
+pub(crate) fn open_download_page<P: Clone>(
+    service: &UpdaterService<P>,
+    open: impl FnOnce(&str) -> Result<(), String>,
+) -> UpdateEnvelope {
+    let offered = match &service.lock().status {
+        UpdateStatus::DownloadPage { version } | UpdateStatus::DownloadPageFailed { version } => {
+            Some(version.clone())
         }
+        _ => None,
     };
-    let bytes = match source.download(&pending, &mut on_chunk) {
-        Ok(bytes) => bytes,
+    let Some(version) = offered else {
+        return service.status();
+    };
+    // The browser opens outside the lock, so a check landing meanwhile is not blocked on it.
+    let status = match open(DOWNLOAD_PAGE_URL) {
+        Ok(()) => {
+            log::info!("update_open outcome=opened version={version}");
+            UpdateStatus::DownloadPage { version }
+        }
         Err(error) => {
-            log::warn!("update_install outcome=failed stage=download error={error}");
-            service.fail(version);
-            return;
+            log::warn!("update_open outcome=failed error={error}");
+            UpdateStatus::DownloadPageFailed { version }
         }
     };
-    log::info!("update_install outcome=downloaded version={version}");
-    if !gate.try_close() {
-        log::info!("update_install outcome=waiting_for_idle version={version}");
-        service.set_status(UpdateStatus::WaitingForIdle {
-            version: version.clone(),
-        });
-        loop {
-            std::thread::sleep(poll);
-            if gate.try_close() {
-                break;
-            }
+    let changed = {
+        let mut state = service.lock();
+        // A check that replaced the offer meanwhile wins over this result.
+        let still_offered = match (&state.status, &status) {
+            (
+                UpdateStatus::DownloadPage { version: current }
+                | UpdateStatus::DownloadPageFailed { version: current },
+                UpdateStatus::DownloadPage { version }
+                | UpdateStatus::DownloadPageFailed { version },
+            ) => current == version,
+            _ => false,
+        };
+        if still_offered {
+            state.change(status)
+        } else {
+            None
         }
-    }
-    log::info!("update_install outcome=installing version={version}");
-    service.set_status(UpdateStatus::Installing {
-        version: version.clone(),
-    });
-    if let Err(error) = source.install(&pending, &bytes) {
-        gate.reopen();
-        log::warn!("update_install outcome=failed stage=install error={error}");
-        service.fail(version);
-        return;
-    }
-    log::info!("update_install outcome=restarting version={version}");
-}
-
-/// The one definition of idle for an install: no capture reservation or session, no
-/// capture phase other than Idle, no active job, no pending delivery, and the quiet
-/// period since the last of those ended.
-fn is_idle(capture_reserved: bool, work: Activity, deliveries: Activity, now: Instant) -> bool {
-    if capture_reserved {
-        return false;
-    }
-    let (Activity::Quiet(work_ended), Activity::Quiet(delivery_ended)) = (work, deliveries) else {
-        return false;
     };
-    work_ended
-        .max(delivery_ended)
-        .is_none_or(|ended| now.saturating_duration_since(ended) >= QUIET_PERIOD)
+    service.publish(changed);
+    service.status()
 }
 
-pub(crate) struct IdleGate {
-    capture: DesktopAudioCapture,
-    runtime: EchoRuntime,
-    deliveries: fn() -> Activity,
+/// The most of a manifest body a notify build reads.
+#[cfg(any(test, not(echo_update_install)))]
+const MANIFEST_LIMIT: usize = 64 * 1024;
+
+/// The release manifest as a notify build reads it: only the version.
+#[cfg(any(test, not(echo_update_install)))]
+#[derive(serde::Deserialize)]
+struct ManifestVersion {
+    version: String,
 }
 
-impl IdleGate {
-    fn is_idle_at(&self, now: Instant) -> bool {
-        let work = self.runtime.activity().unwrap_or(Activity::Running);
-        is_idle(
-            self.capture.has_reservation(),
-            work,
-            (self.deliveries)(),
-            now,
-        )
-    }
-
-    /// The first read keeps a busy Echo from refusing captures every poll; the read after
-    /// setting the barrier is the one that makes admission atomic.
-    fn try_close_at(&self, now: Instant) -> bool {
-        if !self.is_idle_at(now) {
-            return false;
-        }
-        self.capture.set_install_barrier(true);
-        if self.is_idle_at(now) {
-            return true;
-        }
-        self.capture.set_install_barrier(false);
-        false
-    }
-}
-
-impl InstallGate for IdleGate {
-    fn try_close(&self) -> bool {
-        self.try_close_at(Instant::now())
-    }
-
-    fn reopen(&self) {
-        self.capture.set_install_barrier(false);
-    }
-}
-
-struct PluginSource<R: Runtime> {
+/// The check on notify builds. It reads the same `plugins.updater` endpoints as the plugin,
+/// in order and under the same client rules, but takes only `version` from the manifest.
+/// Nothing is downloaded, so no signature is verified; an offer can only open
+/// [`DOWNLOAD_PAGE_URL`].
+#[cfg(any(test, not(echo_update_install)))]
+pub(crate) struct ManifestSource<R: Runtime> {
     app: AppHandle<R>,
     /// The limit on a whole check request. Tests shorten it to exercise a server that stalls.
     check_timeout: Duration,
 }
 
-impl<R: Runtime> PluginSource<R> {
-    fn new(app: AppHandle<R>) -> Self {
+#[cfg(any(test, not(echo_update_install)))]
+impl<R: Runtime> ManifestSource<R> {
+    pub(crate) fn new(app: AppHandle<R>) -> Self {
         Self {
             app,
             check_timeout: CHECK_TIMEOUT,
         }
     }
 
-    fn updater(&self) -> tauri_plugin_updater::Result<Updater> {
-        let https_only = !self.insecure_transport_configured();
-        let app = self.app.clone();
-        self.app
-            .updater_builder()
-            .no_proxy()
-            .timeout(self.check_timeout)
-            .configure_client(move |client| {
-                client
-                    .https_only(https_only)
-                    .redirect(updater_reqwest::redirect::Policy::limited(MAX_REDIRECTS))
-                    .connect_timeout(CONNECT_TIMEOUT)
-            })
-            .version_comparator(|current, release| {
-                release.version > current && release.version.pre.is_empty()
-            })
-            .on_before_exit(move || {
-                crate::app_setup::shutdown_application(&app);
-                app.cleanup_before_exit();
-            })
-            .build()
-    }
-
-    /// Only the staging overlay sets this, to serve a loopback manifest over HTTP.
-    fn insecure_transport_configured(&self) -> bool {
+    fn updater_config(&self, key: &str) -> Option<serde_json::Value> {
         self.app
             .config()
             .plugins
             .0
             .get("updater")
-            .and_then(|updater| updater.get("dangerousInsecureTransportProtocol"))
+            .and_then(|updater| updater.get(key))
+            .cloned()
+    }
+
+    /// The configured endpoints in order. Like the plugin, a missing list, an empty list or
+    /// an endpoint that is not a URL fails the whole check.
+    fn endpoints(&self) -> Result<Vec<reqwest::Url>, String> {
+        let configured = self.updater_config("endpoints");
+        let endpoints = configured
+            .as_ref()
+            .and_then(serde_json::Value::as_array)
+            .filter(|endpoints| !endpoints.is_empty())
+            .ok_or("no update endpoints configured")?;
+        endpoints
+            .iter()
+            .map(|endpoint| {
+                let endpoint = endpoint.as_str().ok_or("update endpoint is not a string")?;
+                reqwest::Url::parse(endpoint).map_err(|error| format!("update endpoint: {error}"))
+            })
+            .collect()
+    }
+
+    /// Only the staging overlay sets this, to serve a loopback manifest over HTTP.
+    fn insecure_transport_configured(&self) -> bool {
+        self.updater_config("dangerousInsecureTransportProtocol")
+            .as_ref()
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false)
     }
+
+    /// The plugin's client rules: no proxy, HTTPS only, at most five redirects, 10-second
+    /// connect and `check_timeout` request limits.
+    fn client(&self) -> reqwest::Result<reqwest::Client> {
+        reqwest::Client::builder()
+            .no_proxy()
+            .https_only(!self.insecure_transport_configured())
+            .redirect(reqwest::redirect::Policy::limited(MAX_REDIRECTS))
+            .connect_timeout(CONNECT_TIMEOUT)
+            .timeout(self.check_timeout)
+            .user_agent("Echo")
+            .build()
+    }
 }
 
-impl<R: Runtime> UpdateSource for PluginSource<R> {
-    type Pending = Update;
+#[cfg(any(test, not(echo_update_install)))]
+impl<R: Runtime> UpdateSource for ManifestSource<R> {
+    type Pending = ();
 
-    fn check(&self) -> CheckOutcome<Update> {
-        let checked = self
-            .updater()
-            .and_then(|updater| tauri::async_runtime::block_on(updater.check()));
-        match checked {
-            // Every endpoint answered without a manifest, as before the first release carries one.
-            Ok(None) | Err(tauri_plugin_updater::Error::ReleaseNotFound) => CheckOutcome::None,
-            Ok(Some(update)) => CheckOutcome::Available {
-                version: update.version.clone(),
-                pending: update,
-            },
-            Err(error) => CheckOutcome::Failed(error.to_string()),
-        }
+    fn check(&self) -> CheckOutcome<()> {
+        let endpoints = match self.endpoints() {
+            Ok(endpoints) => endpoints,
+            Err(error) => return CheckOutcome::Failed(error),
+        };
+        let client = match self.client() {
+            Ok(client) => client,
+            Err(error) => return CheckOutcome::Failed(error.to_string()),
+        };
+        let version = &self.app.package_info().version;
+        let current = (version.major, version.minor, version.patch);
+        tauri::async_runtime::block_on(check_endpoints(&client, &endpoints, current))
     }
 
+    // Install builds compile this source only for tests. A manifest offer carries no
+    // artifact, so there is nothing to download or install.
+    #[cfg(echo_update_install)]
     fn download(
         &self,
-        pending: &Update,
-        on_chunk: &mut dyn FnMut(usize, Option<u64>),
+        _pending: &(),
+        _on_chunk: &mut dyn FnMut(usize, Option<u64>),
     ) -> Result<Vec<u8>, String> {
-        let mut update = pending.clone();
-        update.timeout = Some(DOWNLOAD_TIMEOUT);
-        tauri::async_runtime::block_on(update.download(on_chunk, || {}))
-            .map_err(|error| error.to_string())
+        Err("a manifest offer has no artifact".into())
     }
 
-    fn install(&self, pending: &Update, bytes: &[u8]) -> Result<(), String> {
-        pending.install(bytes).map_err(|error| error.to_string())?;
-        #[cfg(target_os = "macos")]
-        self.app.request_restart();
-        Ok(())
+    #[cfg(echo_update_install)]
+    fn install(&self, _pending: &(), _bytes: &[u8]) -> Result<(), String> {
+        Err("a manifest offer has no artifact".into())
     }
+}
+
+/// Walks the endpoints as the plugin does: 204 means no release; any other non-2xx moves on
+/// without an error; a request, size, JSON or version error is kept and moves on; the first
+/// readable manifest stops the walk and clears any kept error. A kept error fails the check.
+#[cfg(any(test, not(echo_update_install)))]
+async fn check_endpoints(
+    client: &reqwest::Client,
+    endpoints: &[reqwest::Url],
+    current: (u64, u64, u64),
+) -> CheckOutcome<()> {
+    let mut last_error: Option<String> = None;
+    let mut release: Option<(String, bool)> = None;
+    for endpoint in endpoints {
+        let response = client
+            .get(endpoint.clone())
+            .header(reqwest::header::ACCEPT, "application/json")
+            .send()
+            .await;
+        let response = match response {
+            Ok(response) => response,
+            Err(error) => {
+                last_error = Some(request_error(endpoint, error));
+                continue;
+            }
+        };
+        if response.status() == reqwest::StatusCode::NO_CONTENT {
+            return CheckOutcome::None;
+        }
+        if !response.status().is_success() {
+            continue;
+        }
+        match read_release(endpoint, response, current).await {
+            Ok(found) => {
+                last_error = None;
+                release = Some(found);
+                break;
+            }
+            Err(error) => last_error = Some(error),
+        }
+    }
+    if let Some(error) = last_error {
+        return CheckOutcome::Failed(error);
+    }
+    match release {
+        Some((version, true)) => CheckOutcome::Available {
+            version,
+            pending: (),
+        },
+        _ => CheckOutcome::None,
+    }
+}
+
+/// A request error without the URL reqwest attaches, which after a redirect is the server's
+/// `Location`. The configured endpoint names the request instead.
+#[cfg(any(test, not(echo_update_install)))]
+fn request_error(endpoint: &reqwest::Url, error: reqwest::Error) -> String {
+    format!("{endpoint}: {}", error.without_url())
+}
+
+/// Reads at most [`MANIFEST_LIMIT`] bytes and returns the canonical version and whether it
+/// is offered. No error carries text from the body.
+#[cfg(any(test, not(echo_update_install)))]
+async fn read_release(
+    endpoint: &reqwest::Url,
+    mut response: reqwest::Response,
+    current: (u64, u64, u64),
+) -> Result<(String, bool), String> {
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| request_error(endpoint, error))?
+    {
+        if body.len() + chunk.len() > MANIFEST_LIMIT {
+            return Err(format!(
+                "{endpoint}: manifest larger than {MANIFEST_LIMIT} bytes"
+            ));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    let manifest: ManifestVersion = serde_json::from_slice(&body).map_err(|error| {
+        format!(
+            "{endpoint}: manifest has no readable version ({:?} error at line {} column {})",
+            error.classify(),
+            error.line(),
+            error.column()
+        )
+    })?;
+    newer_stable(current, &manifest.version).map_err(|error| format!("{endpoint}: {error}"))
+}
+
+/// The longest release version a notify build accepts; longer ones fail the check.
+#[cfg(any(test, not(echo_update_install)))]
+const VERSION_LIMIT: usize = 128;
+
+/// The plugin's semver rules without semver: after one optional leading `v`, exactly
+/// `major.minor.patch` of numbers without leading zeros, then an optional `-prerelease` and
+/// an optional `+build`, each dot-separated identifiers of ASCII letters, digits and `-`.
+/// Anything else is an error. Returns the canonical `major.minor.patch`, rebuilt from the
+/// numbers so no server text leaves the check, and whether the release is offered: higher
+/// than `current` and not a prerelease. Build metadata is dropped.
+#[cfg(any(test, not(echo_update_install)))]
+fn newer_stable(current: (u64, u64, u64), release: &str) -> Result<(String, bool), String> {
+    let invalid = || "release version is not valid semver".to_owned();
+    if release.len() > VERSION_LIMIT {
+        return Err(invalid());
+    }
+    let release = release.strip_prefix('v').unwrap_or(release);
+    let (release, build) = match release.split_once('+') {
+        Some((release, build)) => (release, Some(build)),
+        None => (release, None),
+    };
+    let (core, prerelease) = match release.split_once('-') {
+        Some((core, prerelease)) => (core, Some(prerelease)),
+        None => (release, None),
+    };
+    if !build.is_none_or(identifiers) || !prerelease.is_none_or(identifiers) {
+        return Err(invalid());
+    }
+    let numbers = core
+        .split('.')
+        .map(version_number)
+        .collect::<Option<Vec<u64>>>()
+        .ok_or_else(invalid)?;
+    let [major, minor, patch] = numbers[..] else {
+        return Err(invalid());
+    };
+    let offered = prerelease.is_none() && (major, minor, patch) > current;
+    Ok((format!("{major}.{minor}.{patch}"), offered))
+}
+
+/// A non-empty dot-separated list of non-empty identifiers of ASCII letters, digits and `-`.
+#[cfg(any(test, not(echo_update_install)))]
+fn identifiers(list: &str) -> bool {
+    list.split('.').all(|identifier| {
+        !identifier.is_empty()
+            && identifier
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    })
+}
+
+#[cfg(any(test, not(echo_update_install)))]
+fn version_number(part: &str) -> Option<u64> {
+    let digits = !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit());
+    let leading_zero = part.len() > 1 && part.starts_with('0');
+    if !digits || leading_zero {
+        return None;
+    }
+    part.parse().ok()
 }
 
 #[cfg(test)]

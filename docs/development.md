@@ -149,13 +149,13 @@ A release puts signed builds for both platforms on a GitHub release and, last, t
    gh release upload v<version> latest.json
    ```
 
-   The script fetches both `.sig` files from `releases/download/<tag>/` and exits non-zero, writing nothing, when one is missing, when a signature's key id differs from the configured pubkey, when the pubkey is the placeholder or not a minisign public key, or when the tag is not exactly `v` followed by package.json's version. The manifest lists `darwin-aarch64` and `windows-x86_64` with URLs under `releases/download/<tag>/`. For a draft release, download the `.sig` files and pass `--assets <dir>`. A release with no `latest.json` offers nothing to installed copies, so a half-uploaded release is safe.
+   The script fetches both `.sig` files from `releases/download/<tag>/` and exits non-zero, writing nothing, when one is missing, when a signature's key id differs from the configured pubkey, when the pubkey is the placeholder or not a minisign public key, or when the tag is not exactly `v` followed by package.json's version. The manifest lists `darwin-aarch64` and `windows-x86_64` with URLs under `releases/download/<tag>/`. For a draft release, download the `.sig` files and pass `--assets <dir>`. A release with no `latest.json` offers nothing to installed copies, so a half-uploaded release is safe. Current Windows builds ignore the Windows `.sig` and the `windows-x86_64` entry, because they only open the releases page ([architecture](architecture.md#updates)); the scripts still produce and require both, for 0.5.0 installs, which install their own updates, and for signed builds once the switch includes Windows.
 
 To replace an asset, upload the new file and its `.sig` with `gh release upload --clobber`, run the manifest script again and re-upload `latest.json` with `--clobber`. To stop offering a release, delete its `latest.json` with `gh release delete-asset v<version> latest.json`.
 
 ## Stage an update
 
-[update-staging.ts](../scripts/update-staging.ts) proves the whole update loop on one machine without the update key or GitHub. It builds vN (package.json's version) and vN+1 (the next patch) from the checkout with the release overlay and a throwaway key pair, and serves vN+1's `latest.json` and artifact on `127.0.0.1`. The key pair, both config overlays and copies of the builds stay in one new `echo-update-staging-*` directory under the OS temp dir. The overlays set the version, the staging pubkey, the loopback endpoint and `dangerousInsecureTransportProtocol`; `ECHO_APP_VERSION` makes the sidebar show each build's own version. No tracked file changes. The two release builds take several minutes each.
+[update-staging.ts](../scripts/update-staging.ts) proves the whole update loop on one machine without the update key or GitHub. It builds vN (package.json's version) and vN+1 (the next patch) from the checkout with the release overlay and a throwaway key pair, and serves vN+1's `latest.json` and artifact on `127.0.0.1`. The key pair, both config overlays and copies of the builds stay in one new `echo-update-staging-*` directory under the OS temp dir. The overlays set the version, the staging pubkey, the loopback endpoint and `dangerousInsecureTransportProtocol`; `ECHO_APP_VERSION` makes the sidebar show each build's own version. No tracked file changes. The two release builds take several minutes each. On Windows, staging proves the check and the link only: the vN build reads the loopback manifest and opens the releases page on GitHub, and nothing is downloaded or installed.
 
 ```sh
 APPLE_SIGNING_IDENTITY=<personal identity sha1> bun scripts/update-staging.ts
@@ -246,14 +246,26 @@ Run these on a packaged build on each OS, started from `/Applications` or a simi
 
 ### Updates
 
-Run these with [update-staging.ts](../scripts/update-staging.ts) on each OS, quitting any other Echo first. Echo writes `update_check` and `update_install` lines to its log (see [locations](../README.md#locations)).
+Run these with [update-staging.ts](../scripts/update-staging.ts) on each OS, quitting any other Echo first. Echo writes `update_check`, `update_install` and, on Windows, `update_open` lines to its log (see [locations](../README.md#locations)).
 
-1. Install the printed vN build: on macOS, move `Echo.app` into `/Applications`; on Windows, run the vN installer. Start it. The sidebar shows an icon button beside `v<N>` named "Update Echo to v<N+1>", and the log shows `update_check outcome=available`.
+On macOS:
+
+1. Install the printed vN build: move `Echo.app` into `/Applications`. Start it. The sidebar shows an icon button beside `v<N>` named "Update Echo to v<N+1>", and the log shows `update_check outcome=available`.
 2. Turn on **Keep Echo running when the dashboard closes**. The tray menu reads Open Echo, Update Echo, a separator and Quit Echo.
-3. Select the sidebar button. It shows download progress, then installing, and Echo restarts on vN+1 with no button and one Echo process. The server output shows one download request even if you select the button or the tray item again during the download, and the tray item reads "Updating Echo…" and is disabled. On Windows the NSIS installer runs passively, with no input pages.
+3. Select the sidebar button. It shows download progress, then installing, and Echo restarts on vN+1 with no button and one Echo process. The server output shows one download request even if you select the button or the tray item again during the download, and the tray item reads "Updating Echo…" and is disabled.
 4. Repeat with a fresh staging run, choosing **Update Echo** from the tray with the dashboard hidden.
 5. Start a dictation and request the install before it ends. The button says the install waits for the dictation to end, the paste lands, and the install starts at least 10 seconds after the last capture, job or paste.
 6. Serve again with `--tamper` against a vN install and request the install. The button reads "Update failed. Try again", vN keeps running and nothing is installed. Selecting it again starts a new download.
 7. Before the first `latest.json` exists, start a release build of the shipped configuration. The log shows `update_check outcome=none`, not `failed`, which proves HTTPS and the redirect chain reach GitHub.
+
+On Windows:
+
+1. Run the printed vN installer and start Echo. The sidebar shows a download icon button beside `v<N>` named "Download Echo v<N+1>", whose tooltip adds "Opens the download page in your browser; run the installer there to update", and the log shows `update_check outcome=available`.
+2. Turn on **Keep Echo running when the dashboard closes**. The tray menu reads Open Echo, Download Echo Update, a separator and Quit Echo.
+3. Select the sidebar button. The default browser opens `https://github.com/alegsm/Echo/releases/latest`, Echo keeps running on vN with the button unchanged, and the log shows `update_open outcome=opened version=<N+1>`. The server output shows only the `latest.json` request, never the artifact.
+4. Hide the dashboard and choose **Download Echo Update** from the tray. The same page opens, the dashboard stays hidden and the log shows another `update_open outcome=opened`.
+5. The failed-open path is not checked by hand: Windows 11 offers no practical way to make the shell fail to open an `https` URL, and without a handler ShellExecuteW shows an app picker and reports success. `download_page_opens_only_the_fixed_url` and `notify_loop_walks_from_offer_to_the_download_page_over_loopback` in [updater_tests.rs](../src-tauri/src/services/updater_tests.rs), and the notify test in [dashboard-update.test.ts](../tests/dashboard-update.test.ts), prove the `download_page_failed` state, its label and announcement, the `update_open outcome=failed` line and the retry.
+6. Before the first `latest.json` exists, start a release build of the shipped configuration. The log shows `update_check outcome=none`, not `failed`.
+7. Scan the release `echo.exe` for the updater plugin, for example with `Select-String -Path echo.exe -Pattern 'tauri-plugin-updater','tauri_plugin_updater','update_install outcome' -SimpleMatch -Encoding ascii`. No line matches.
 
 Record the platform, build provenance and the server output with each run.

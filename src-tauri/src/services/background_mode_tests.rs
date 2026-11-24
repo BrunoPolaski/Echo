@@ -91,7 +91,8 @@ fn dashboard_is_hidden_at_start_only_for_a_login_launch_with_the_setting_on() {
 }
 
 // Keep: the tray reads Open Echo, Update Echo, separator, Quit Echo with an update to
-// offer, shows the item disabled while one installs, and omits it with none.
+// offer, shows the item disabled while one installs, and omits it with none. A notify
+// build offers Download Echo Update in the same place.
 #[test]
 fn tray_menu_offers_update_echo_only_with_an_update() {
     let item = |id, text, enabled| TrayEntry::Item { id, text, enabled };
@@ -116,6 +117,15 @@ fn tray_menu_offers_update_echo_only_with_an_update() {
             vec![
                 open(),
                 item("tray-update", "Updating Echo…", false),
+                TrayEntry::Separator,
+                quit(),
+            ],
+        ),
+        (
+            TrayOffer::DownloadPage,
+            vec![
+                open(),
+                item("tray-update", "Download Echo Update", true),
                 TrayEntry::Separator,
                 quit(),
             ],

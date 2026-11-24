@@ -18,6 +18,7 @@ struct FnHotkeyEvent {
 pub fn setup_application(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let audio_capture = initialize_runtime(app)?;
     updater::manage(app.handle());
+    create_windows(app)?;
     configure_overlay(app, &audio_capture);
     configure_dashboard(app, &audio_capture);
     #[cfg(target_os = "windows")]
@@ -35,7 +36,19 @@ pub fn setup_application(app: &mut tauri::App) -> Result<(), Box<dyn std::error:
     Ok(())
 }
 
-// tauri.conf.json creates the dashboard hidden, so a login launch never flashes it.
+// tauri.conf.json marks both windows `create: false`, so no renderer exists until the
+// state its commands read is managed. A command that reads unmanaged state panics, and
+// on Windows WebView2 delivers a loaded window's calls while the next window is still
+// being built, inside a callback a panic cannot unwind through: Echo aborts.
+fn create_windows<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
+    for window in app.config().app.windows.iter().filter(|w| !w.create) {
+        tauri::WebviewWindowBuilder::from_config(app.handle(), window)?.build()?;
+    }
+    Ok(())
+}
+
+// tauri.conf.json keeps the dashboard hidden when it is built, so a login launch never
+// flashes it.
 // The tray is applied first because a hidden start leaves the Dock only with a tray.
 fn show_tray_and_dashboard(app: &tauri::App) {
     let runtime = app.state::<EchoRuntime>();
