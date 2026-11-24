@@ -1,24 +1,37 @@
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+#[cfg(echo_update_install)]
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime};
+#[cfg(echo_update_install)]
+use std::time::Instant;
+use std::time::{Duration, SystemTime};
 
 use tauri::test::MockRuntime;
 use tauri::Manager;
+#[cfg(echo_update_install)]
+use tauri_plugin_updater::Update;
 
+#[cfg(echo_update_install)]
+use super::install::*;
 use super::*;
+#[cfg(echo_update_install)]
 use crate::audio::tests::fixtures::{owner, spawn_coordinator, FakeBackend};
+#[cfg(echo_update_install)]
 use crate::audio::{
     AudioCapturePolicy, CancelCapture, CaptureErrorCode, CaptureEvent, CaptureIntent, CapturePhase,
-    CapturePurpose,
+    CapturePurpose, DesktopAudioCapture,
 };
-use crate::services::runtime::EchoErrorCode;
+#[cfg(echo_update_install)]
+use crate::services::runtime::{Activity, EchoErrorCode, EchoRuntime};
 
 const ARTIFACT: &[u8] = include_bytes!("updater_fixtures/artifact.bin");
 const ARTIFACT_SIGNATURE: &str = include_str!("updater_fixtures/artifact.bin.sig");
+#[cfg(echo_update_install)]
 const TRUSTED_KEY: &str = include_str!("updater_fixtures/trusted.pub");
+#[cfg(echo_update_install)]
 const OTHER_KEY: &str = include_str!("updater_fixtures/other.pub");
 
 type Published = Arc<Mutex<Vec<UpdateEnvelope>>>;
@@ -58,15 +71,22 @@ fn version_state(state: &str) -> UpdateStatus {
 struct FakeSource {
     checks: Mutex<VecDeque<CheckOutcome<&'static str>>>,
     check_calls: AtomicUsize,
+    #[cfg(echo_update_install)]
     chunks: Vec<usize>,
+    #[cfg(echo_update_install)]
     total: Option<u64>,
+    #[cfg(echo_update_install)]
     download_errors: Mutex<VecDeque<String>>,
+    #[cfg(echo_update_install)]
     download_calls: AtomicUsize,
+    #[cfg(echo_update_install)]
     install_error: Option<String>,
+    #[cfg(echo_update_install)]
     installs: Mutex<Vec<(&'static str, Vec<u8>)>>,
 }
 
 impl FakeSource {
+    #[cfg(echo_update_install)]
     fn offering(version: &str) -> Self {
         let source = Self {
             chunks: vec![1000; 4],
@@ -97,6 +117,7 @@ impl UpdateSource for FakeSource {
             .unwrap_or(CheckOutcome::None)
     }
 
+    #[cfg(echo_update_install)]
     fn download(
         &self,
         _pending: &&'static str,
@@ -112,6 +133,7 @@ impl UpdateSource for FakeSource {
         Ok(vec![7; self.chunks.iter().sum()])
     }
 
+    #[cfg(echo_update_install)]
     fn install(&self, pending: &&'static str, bytes: &[u8]) -> Result<(), String> {
         self.installs
             .lock()
@@ -121,6 +143,7 @@ impl UpdateSource for FakeSource {
     }
 }
 
+#[cfg(echo_update_install)]
 /// Refuses `refusals` times, then closes. `hold` keeps it refusing until released.
 #[derive(Default)]
 struct FakeGate {
@@ -131,6 +154,7 @@ struct FakeGate {
     reopened: AtomicUsize,
 }
 
+#[cfg(echo_update_install)]
 impl InstallGate for FakeGate {
     fn try_close(&self) -> bool {
         self.attempts.fetch_add(1, Ordering::SeqCst);
@@ -153,6 +177,7 @@ impl InstallGate for FakeGate {
     }
 }
 
+#[cfg(echo_update_install)]
 fn install<S: UpdateSource>(service: &UpdaterService<S::Pending>, source: &S, gate: &FakeGate) {
     let (version, pending) = service.admit_install().expect("install admitted");
     run_install(
@@ -230,6 +255,7 @@ fn status_envelope_matches_the_dashboard_contract() {
 }
 
 // Keep: none and failed checks show nothing, and a failed check keeps an existing offer.
+#[cfg(echo_update_install)]
 #[test]
 fn checks_offer_a_release_and_failures_keep_the_status_exactly() {
     let (service, published) = service();
@@ -270,6 +296,7 @@ fn checks_offer_a_release_and_failures_keep_the_status_exactly() {
 }
 
 // Keep: an admitted install reports rising progress, then installing, and installs once.
+#[cfg(echo_update_install)]
 #[test]
 fn install_reports_rising_progress_then_installs_once() {
     for (chunks, total, expected) in [
@@ -320,6 +347,7 @@ fn install_reports_rising_progress_then_installs_once() {
 }
 
 // Keep: a download or verification failure installs nothing, and a retry downloads again.
+#[cfg(echo_update_install)]
 #[test]
 fn failed_download_installs_nothing_and_a_retry_downloads_again() {
     let (service, _) = service();
@@ -344,6 +372,7 @@ fn failed_download_installs_nothing_and_a_retry_downloads_again() {
 }
 
 // Keep: while one install runs, further requests and scheduled checks change nothing.
+#[cfg(echo_update_install)]
 #[test]
 fn repeated_requests_during_an_install_start_one_download() {
     let (service, published) = service();
@@ -397,6 +426,7 @@ fn repeated_requests_during_an_install_start_one_download() {
 
 // Keep: a busy Echo gets waiting_for_idle and no install until the gate closes; an install
 // failure reopens capture admission and leaves the offer retryable.
+#[cfg(echo_update_install)]
 #[test]
 fn install_waits_for_idle_and_a_failed_install_reopens_capture() {
     let (service, published) = service();
@@ -428,6 +458,7 @@ fn install_waits_for_idle_and_a_failed_install_reopens_capture() {
 
 // Keep: idle needs no reservation, no running work or delivery, and ten quiet seconds
 // after the last of them, so a paste delivered 5 s after its job still lands first.
+#[cfg(echo_update_install)]
 #[test]
 fn idle_requires_no_work_and_ten_quiet_seconds() {
     let job_done = Instant::now();
@@ -512,10 +543,12 @@ fn idle_requires_no_work_and_ten_quiet_seconds() {
     }
 }
 
+#[cfg(echo_update_install)]
 fn quiet_deliveries() -> Activity {
     Activity::Quiet(None)
 }
 
+#[cfg(echo_update_install)]
 fn idle_gate(capture: &DesktopAudioCapture, runtime: &EchoRuntime) -> IdleGate {
     IdleGate {
         capture: capture.clone(),
@@ -524,6 +557,7 @@ fn idle_gate(capture: &DesktopAudioCapture, runtime: &EchoRuntime) -> IdleGate {
     }
 }
 
+#[cfg(echo_update_install)]
 fn reserve(capture: &DesktopAudioCapture, intent_id: &str) -> Result<(), CaptureErrorCode> {
     capture
         .reserve(
@@ -537,6 +571,7 @@ fn reserve(capture: &DesktopAudioCapture, intent_id: &str) -> Result<(), Capture
         .map_err(|error| error.code)
 }
 
+#[cfg(echo_update_install)]
 fn cancel(capture: &DesktopAudioCapture, intent_id: &str) {
     capture
         .cancel(CancelCapture {
@@ -548,6 +583,7 @@ fn cancel(capture: &DesktopAudioCapture, intent_id: &str) {
         .unwrap();
 }
 
+#[cfg(echo_update_install)]
 fn capture_event(phase: CapturePhase) -> CaptureEvent {
     CaptureEvent {
         elapsed_ms: 0,
@@ -571,6 +607,7 @@ fn capture_event(phase: CapturePhase) -> CaptureEvent {
 
 // Keep: the gate reads the real reservation and runtime state and waits out the quiet
 // period after a capture or job ends.
+#[cfg(echo_update_install)]
 #[test]
 fn idle_gate_waits_for_reservations_captures_jobs_and_the_quiet_period() {
     let (backend, _, _, _) = FakeBackend::blocked();
@@ -605,6 +642,7 @@ fn idle_gate_waits_for_reservations_captures_jobs_and_the_quiet_period() {
 
 // Keep: a closed barrier refuses capture before the microphone opens; reopening it after a
 // failed install lets the next capture start normally.
+#[cfg(echo_update_install)]
 #[test]
 fn closed_barrier_refuses_capture_without_opening_the_microphone() {
     let (backend, open_started, release_open, _) = FakeBackend::blocked();
@@ -640,10 +678,12 @@ fn closed_barrier_refuses_capture_without_opening_the_microphone() {
         .expect("microphone opened after reopening");
 }
 
+#[cfg(echo_update_install)]
 static INTERLEAVED_CAPTURE: Mutex<Option<DesktopAudioCapture>> = Mutex::new(None);
 
 /// Reserves on the shared capture during the gate's first idle read, as a capture start
 /// landing between that read and the barrier would.
+#[cfg(echo_update_install)]
 fn deliveries_while_a_capture_starts() -> Activity {
     if let Some(capture) = INTERLEAVED_CAPTURE.lock().unwrap().take() {
         reserve(&capture, "interleaved").unwrap();
@@ -654,6 +694,7 @@ fn deliveries_while_a_capture_starts() -> Activity {
 // Keep: the barrier race, the order closed_barrier_refuses_capture does not cover. A
 // capture reserved after the gate's first idle read but before the barrier is seen by
 // the read after the barrier, so the install keeps waiting and the capture runs.
+#[cfg(echo_update_install)]
 #[test]
 fn capture_reserved_before_the_barrier_keeps_the_install_waiting() {
     let (backend, _, _, _) = FakeBackend::blocked();
@@ -751,6 +792,7 @@ impl<F: Fn()> UpdateSource for TrackingSource<'_, F> {
         self.inner.check()
     }
 
+    #[cfg(echo_update_install)]
     fn download(
         &self,
         pending: &&'static str,
@@ -759,6 +801,7 @@ impl<F: Fn()> UpdateSource for TrackingSource<'_, F> {
         self.inner.download(pending, on_chunk)
     }
 
+    #[cfg(echo_update_install)]
     fn install(&self, pending: &&'static str, bytes: &[u8]) -> Result<(), String> {
         self.inner.install(pending, bytes)
     }
@@ -852,7 +895,11 @@ impl Loopback {
 }
 
 fn manifest(version: &str, artifact_url: &str) -> Vec<u8> {
+    #[cfg(echo_update_install)]
     let target = tauri_plugin_updater::target().unwrap();
+    // A notify build reads only `version`; the entry keeps the published manifest's shape.
+    #[cfg(not(echo_update_install))]
+    let target = "windows-x86_64";
     serde_json::json!({
         "version": version,
         "platforms": {
@@ -863,6 +910,7 @@ fn manifest(version: &str, artifact_url: &str) -> Vec<u8> {
     .into_bytes()
 }
 
+#[cfg(echo_update_install)]
 /// A mock app running the real updater plugin as an installed 0.5.0 would.
 fn plugin_app(endpoints: &[String], pubkey: &str, insecure: bool) -> tauri::App<MockRuntime> {
     let mut context = tauri::test::mock_context(tauri::test::noop_assets());
@@ -882,12 +930,13 @@ fn plugin_app(endpoints: &[String], pubkey: &str, insecure: bool) -> tauri::App<
         .unwrap()
 }
 
+#[cfg(echo_update_install)]
 fn plugin_check(endpoints: &[String], insecure: bool) -> CheckOutcome<Update> {
     let app = plugin_app(endpoints, TRUSTED_KEY, insecure);
     PluginSource::new(app.handle().clone()).check()
 }
 
-fn offered_version(outcome: &CheckOutcome<Update>) -> Option<&str> {
+fn offered_version<P>(outcome: &CheckOutcome<P>) -> Option<&str> {
     match outcome {
         CheckOutcome::Available { version, .. } => Some(version),
         _ => None,
@@ -896,6 +945,7 @@ fn offered_version(outcome: &CheckOutcome<Update>) -> Option<&str> {
 
 // Keep: 404s from both endpoints read as no update, checked in configured order, and the
 // second endpoint is used when the first has no manifest.
+#[cfg(echo_update_install)]
 #[test]
 fn missing_manifests_read_as_no_update() {
     let server = Loopback::start(|base, path| match path {
@@ -924,6 +974,7 @@ fn missing_manifests_read_as_no_update() {
 
 // Keep: the real comparator offers only higher stable versions, never a downgrade,
 // the same version or a prerelease.
+#[cfg(echo_update_install)]
 #[test]
 fn only_a_higher_stable_release_is_offered() {
     let server = Loopback::start(|base, path| {
@@ -1041,6 +1092,7 @@ fn failing_checks(release: &Loopback) -> (Vec<FailingCheck>, Arc<AtomicUsize>) {
     (cases, tls_hellos)
 }
 
+#[cfg(echo_update_install)]
 /// The real plugin source for `failing`, with the short check timeout.
 fn failing_source(failing: &FailingCheck) -> (tauri::App<MockRuntime>, PluginSource<MockRuntime>) {
     let app = plugin_app(
@@ -1059,6 +1111,7 @@ fn failing_source(failing: &FailingCheck) -> (tauri::App<MockRuntime>, PluginSou
 // under the shipped config and a refused connection each fail the check through the real
 // plugin and leave the envelope unchanged, so nothing is published: none stays none, and an
 // existing offer stays available with its version. Five redirects still reach the manifest.
+#[cfg(echo_update_install)]
 #[test]
 fn check_failures_keep_the_status_and_redirects_stop_after_five() {
     let release = release_server();
@@ -1100,6 +1153,7 @@ fn check_failures_keep_the_status_and_redirects_stop_after_five() {
 }
 
 // Keep: a shipped check gives up after 30 s; the failure cases above shorten it.
+#[cfg(echo_update_install)]
 #[test]
 fn shipped_checks_time_out_after_30_seconds() {
     let app = plugin_app(&[], TRUSTED_KEY, false);
@@ -1109,12 +1163,14 @@ fn shipped_checks_time_out_after_30_seconds() {
     );
 }
 
+#[cfg(echo_update_install)]
 /// Delegates to the real plugin but never installs, so a test cannot replace anything.
 struct NeverInstalls<S> {
     inner: S,
     installs: AtomicUsize,
 }
 
+#[cfg(echo_update_install)]
 impl<S: UpdateSource> UpdateSource for NeverInstalls<S> {
     type Pending = S::Pending;
 
@@ -1139,6 +1195,7 @@ impl<S: UpdateSource> UpdateSource for NeverInstalls<S> {
 // Keep: tampered bytes, a foreign signing key or an http:// artifact under the shipped
 // config fail the install at download, with nothing installed; the untampered artifact
 // verifies against the configured key.
+#[cfg(echo_update_install)]
 #[test]
 fn tampered_or_foreign_artifacts_fail_without_installing() {
     let server = Loopback::start(|base, path| match path {
@@ -1206,6 +1263,7 @@ fn tampered_or_foreign_artifacts_fail_without_installing() {
 }
 
 // Keep: a debug build, as `bun run tauri:dev` runs, never contacts an endpoint.
+#[cfg(echo_update_install)]
 #[test]
 fn debug_builds_never_contact_the_endpoints() {
     let server = Loopback::start(|_, _| Reply::status(404));
@@ -1224,6 +1282,7 @@ fn debug_builds_never_contact_the_endpoints() {
 
 // Keep: the log lines Alex reviews. The log facade accepts one logger per process, so
 // this runs in a child process.
+#[cfg(echo_update_install)]
 #[test]
 fn checks_log_none_for_missing_manifests_and_failed_for_errors() {
     const CHILD: &str = "ECHO_TEST_UPDATE_CHECK_LOG_CHILD";
@@ -1285,6 +1344,7 @@ fn checks_log_none_for_missing_manifests_and_failed_for_errors() {
 // check against a loopback release offers 0.5.1, the install downloads and verifies the
 // signed artifact with progress, waits while a capture is reserved, then installs; the
 // stand-in installer fails, so capture admission reopens and the offer reads failed.
+#[cfg(echo_update_install)]
 #[test]
 fn update_loop_walks_from_offer_to_install_over_loopback() {
     let server = Loopback::start(|base, path| match path {
@@ -1425,4 +1485,820 @@ fn update_loop_walks_from_offer_to_install_over_loopback() {
             .count()
             == 1
     );
+}
+
+/// Runs the named test of this module again in a child process and returns false; in that
+/// child it returns true, and the test may install the process logger. The log facade
+/// accepts one logger per process.
+fn in_log_child(marker: &str, test: &str) -> bool {
+    if std::env::var_os(marker).is_some() {
+        return true;
+    }
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    let status = crate::test_support::clear_child_environment(&mut command)
+        .env(marker, "1")
+        .args([
+            "--exact",
+            &format!("services::updater::tests::{test}"),
+            "--nocapture",
+        ])
+        .status()
+        .unwrap();
+    assert!(status.success(), "{test} failed in its child process");
+    false
+}
+
+/// Records the `update_` log lines Alex reviews.
+struct UpdateLog(Mutex<Vec<String>>);
+
+impl log::Log for UpdateLog {
+    fn enabled(&self, _: &log::Metadata<'_>) -> bool {
+        true
+    }
+    fn log(&self, record: &log::Record<'_>) {
+        let line = record.args().to_string();
+        if line.starts_with("update_") {
+            self.0.lock().unwrap().push(line);
+        }
+    }
+    fn flush(&self) {}
+}
+
+static UPDATE_LOG: UpdateLog = UpdateLog(Mutex::new(Vec::new()));
+
+fn record_update_log() -> &'static UpdateLog {
+    log::set_logger(&UPDATE_LOG).unwrap();
+    log::set_max_level(log::LevelFilter::Info);
+    &UPDATE_LOG
+}
+
+fn logged(log: &UpdateLog) -> Vec<String> {
+    log.0.lock().unwrap().clone()
+}
+
+/// A mock app configured as an installed 0.5.0 notify build: the updater configuration is
+/// present and the updater plugin is not registered.
+fn manifest_app(endpoints: &[String], insecure: bool) -> tauri::App<MockRuntime> {
+    let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+    context.package_info_mut().version = "0.5.0".parse().unwrap();
+    let mut updater = serde_json::json!({"endpoints": endpoints});
+    if insecure {
+        updater["dangerousInsecureTransportProtocol"] = true.into();
+    }
+    context
+        .config_mut()
+        .plugins
+        .0
+        .insert("updater".into(), updater);
+    tauri::test::mock_builder().build(context).unwrap()
+}
+
+fn manifest_check(endpoints: &[String], insecure: bool) -> CheckOutcome<()> {
+    let app = manifest_app(endpoints, insecure);
+    ManifestSource::new(app.handle().clone()).check()
+}
+
+/// The manifest source for `failing`, with the short check timeout.
+fn failing_manifest_source(
+    failing: &FailingCheck,
+) -> (tauri::App<MockRuntime>, ManifestSource<MockRuntime>) {
+    let app = manifest_app(std::slice::from_ref(&failing.endpoint), failing.insecure);
+    let source = ManifestSource {
+        check_timeout: SHORT_CHECK_TIMEOUT,
+        ..ManifestSource::new(app.handle().clone())
+    };
+    (app, source)
+}
+
+/// A manifest of exactly `length` bytes offering 0.5.1, padded with release notes.
+fn padded_manifest(length: usize) -> Vec<u8> {
+    let empty = serde_json::json!({"version": "0.5.1", "notes": ""}).to_string();
+    let notes = "n".repeat(length - empty.len());
+    let body = serde_json::json!({"version": "0.5.1", "notes": notes})
+        .to_string()
+        .into_bytes();
+    assert_eq!(body.len(), length);
+    body
+}
+
+/// Failures only the manifest source reads: a version that is not major.minor.patch, a
+/// manifest without a version and a body over 64 KiB.
+fn manifest_failures(release: &Loopback) -> Vec<FailingCheck> {
+    ["/bad-version", "/no-version", "/oversized"]
+        .into_iter()
+        .map(|path| FailingCheck {
+            case: path,
+            endpoint: release.url(path),
+            insecure: true,
+        })
+        .collect()
+}
+
+/// Serves the manifest-only failures and a body of exactly 64 KiB at `/limit`.
+fn manifest_release_server() -> Loopback {
+    Loopback::start(|_, path| match path {
+        "/bad-version" => Reply::body(r#"{"version": "0.5"}"#),
+        "/no-version" => Reply::body(r#"{"name": "Echo"}"#),
+        "/oversized" => Reply::body(padded_manifest(MANIFEST_LIMIT + 1)),
+        "/limit" => Reply::body(padded_manifest(MANIFEST_LIMIT)),
+        _ => Reply::status(404),
+    })
+}
+
+// Keep: the notify check reads no release from 404s on every endpoint, in configured order,
+// falls back to the second endpoint, and stops at a 204 as the plugin does.
+#[test]
+fn manifest_missing_manifests_and_no_content_read_as_no_update() {
+    let server = Loopback::start(|base, path| match path {
+        "/fallback/latest.json" => Reply::body(manifest("0.5.1", &format!("{base}/artifact"))),
+        "/empty/latest.json" => Reply::status(204),
+        _ => Reply::status(404),
+    });
+    let endpoints = [
+        server.url("/first/latest.json"),
+        server.url("/second/latest.json"),
+    ];
+    assert!(matches!(
+        manifest_check(&endpoints, true),
+        CheckOutcome::None
+    ));
+    assert_eq!(
+        server.requests(),
+        ["/first/latest.json", "/second/latest.json"]
+    );
+
+    let fallback = [
+        server.url("/first/latest.json"),
+        server.url("/fallback/latest.json"),
+    ];
+    assert_eq!(
+        offered_version(&manifest_check(&fallback, true)),
+        Some("0.5.1")
+    );
+
+    let before = server.requests().len();
+    let no_content = [
+        server.url("/empty/latest.json"),
+        server.url("/fallback/latest.json"),
+    ];
+    assert!(matches!(
+        manifest_check(&no_content, true),
+        CheckOutcome::None
+    ));
+    assert_eq!(&server.requests()[before..], ["/empty/latest.json"]);
+}
+
+// Keep: the notify comparator offers only higher stable versions, without a leading `v`,
+// never a downgrade, the same version or a prerelease.
+#[test]
+fn manifest_offers_only_a_higher_stable_release() {
+    let server = Loopback::start(|base, path| {
+        let version = path
+            .trim_start_matches('/')
+            .trim_end_matches("/latest.json");
+        Reply::body(manifest(version, &format!("{base}/artifact")))
+    });
+    for (version, offered) in [
+        ("0.5.0", None),
+        ("0.4.9", None),
+        ("v0.5.0", None),
+        ("0.5.1-beta.1", None),
+        ("0.5.1", Some("0.5.1")),
+        ("v0.5.1", Some("0.5.1")),
+        ("0.5.1+build.7", Some("0.5.1")),
+        ("1.0.0", Some("1.0.0")),
+    ] {
+        let endpoint = [server.url(&format!("/{version}/latest.json"))];
+        assert_eq!(
+            offered_version(&manifest_check(&endpoint, true)),
+            offered,
+            "{version}"
+        );
+    }
+}
+
+// Keep: the plugin's failures, plus a malformed version, a manifest without a version and a
+// body over 64 KiB, each fail the notify check and leave the envelope unchanged: none stays
+// none and an offer keeps its version. Five redirects and a 64 KiB body still read the offer.
+#[test]
+fn manifest_check_failures_keep_the_status_and_redirects_stop_after_five() {
+    let release = release_server();
+    assert_eq!(
+        offered_version(&manifest_check(&[release.url("/redirect/5")], true)),
+        Some("0.5.1")
+    );
+    let extra = manifest_release_server();
+    assert_eq!(
+        offered_version(&manifest_check(&[extra.url("/limit")], true)),
+        Some("0.5.1")
+    );
+    let offering = manifest_app(&[release.url("/redirect/0")], true);
+    let (mut cases, tls_hellos) = failing_checks(&release);
+    cases.extend(manifest_failures(&extra));
+    for failing in &cases {
+        for offered in [false, true] {
+            let (service, _) = service::<()>();
+            if offered {
+                check_once(&service, &ManifestSource::new(offering.handle().clone()));
+                assert_eq!(service.status().status, offer("0.5.1".into()));
+            }
+            let before = service.status();
+            let requests_before = release.requests().len();
+
+            let (_app, source) = failing_manifest_source(failing);
+            check_once(&service, &source);
+
+            let case = failing.case;
+            assert_eq!(service.status(), before, "{case}, offered: {offered}");
+            if case == "http under the shipped config" {
+                assert_eq!(
+                    release.requests().len(),
+                    requests_before,
+                    "{case} sent a request"
+                );
+            }
+        }
+    }
+    assert_eq!(
+        tls_hellos.load(Ordering::SeqCst),
+        2,
+        "TLS handshakes attempted"
+    );
+}
+
+// Keep: a shipped notify check gives up after 30 s; the failure cases above shorten it.
+#[test]
+fn manifest_shipped_checks_time_out_after_30_seconds() {
+    let app = manifest_app(&[], false);
+    assert_eq!(
+        ManifestSource::new(app.handle().clone()).check_timeout,
+        Duration::from_secs(30)
+    );
+}
+
+// Keep: the shipped endpoints carry no URL template variables, so the notify check requests
+// them as written, without the plugin's {{target}} substitution.
+#[test]
+fn shipped_endpoints_need_no_template_substitution() {
+    let config: serde_json::Value =
+        serde_json::from_str(include_str!("../../tauri.conf.json")).unwrap();
+    let endpoints = config["plugins"]["updater"]["endpoints"]
+        .as_array()
+        .unwrap();
+    assert_eq!(endpoints.len(), 2);
+    for endpoint in endpoints {
+        let endpoint = endpoint.as_str().unwrap();
+        assert!(endpoint.starts_with("https://"), "{endpoint}");
+        assert!(!endpoint.contains("{{"), "{endpoint}");
+    }
+}
+
+// Keep: the notify check's log lines for none, an offer and every failure kind.
+#[test]
+fn manifest_checks_log_none_available_and_failed() {
+    if !in_log_child(
+        "ECHO_TEST_MANIFEST_CHECK_LOG_CHILD",
+        "manifest_checks_log_none_available_and_failed",
+    ) {
+        return;
+    }
+    let log = record_update_log();
+    let release = release_server();
+    let extra = manifest_release_server();
+    for path in ["/latest.json", "/redirect/0"] {
+        let app = manifest_app(&[release.url(path)], true);
+        check_once(
+            &service::<()>().0,
+            &ManifestSource::new(app.handle().clone()),
+        );
+    }
+    let (mut cases, _) = failing_checks(&release);
+    cases.extend(manifest_failures(&extra));
+    for failing in &cases {
+        let (_app, source) = failing_manifest_source(failing);
+        check_once(&service::<()>().0, &source);
+    }
+    let records = logged(log);
+    assert_eq!(records.len(), 2 + cases.len(), "{records:?}");
+    assert_eq!(records[0], "update_check outcome=none");
+    assert_eq!(records[1], "update_check outcome=available version=0.5.1");
+    for (failing, record) in cases.iter().zip(&records[2..]) {
+        assert!(
+            record.starts_with("update_check outcome=failed error="),
+            "{}: {record}",
+            failing.case
+        );
+    }
+}
+
+// Keep: the comparator rules without semver: one leading v, build metadata ignored, any
+// prerelease not offered, and anything but three plain numbers an error.
+#[test]
+fn newer_stable_compares_three_numbers_and_skips_prereleases() {
+    let current = (0, 5, 0);
+    let long_build = format!("0.5.1+{}", "a".repeat(200));
+    let offered = |version: &str| Ok((version.to_owned(), true));
+    let not_offered = |version: &str| Ok((version.to_owned(), false));
+    for (release, expected) in [
+        ("0.5.1", offered("0.5.1")),
+        ("0.6.0", offered("0.6.0")),
+        ("1.0.0", offered("1.0.0")),
+        ("0.5.10", offered("0.5.10")),
+        ("v0.5.1", offered("0.5.1")),
+        ("0.5.1+build.7", offered("0.5.1")),
+        ("0.5.1+build-7.x-y", offered("0.5.1")),
+        ("0.5.0", not_offered("0.5.0")),
+        ("v0.5.0", not_offered("0.5.0")),
+        ("0.5.0+build.7", not_offered("0.5.0")),
+        ("0.4.99", not_offered("0.4.99")),
+        ("0.5.1-beta.1", not_offered("0.5.1")),
+        ("0.5.1-beta-2", not_offered("0.5.1")),
+        ("1.0.0-rc.1+build.7", not_offered("1.0.0")),
+        ("0.5", Err(())),
+        ("0.5.1.2", Err(())),
+        ("vv0.5.1", Err(())),
+        ("0.05.1", Err(())),
+        ("0.5.-1", Err(())),
+        ("0.5.1-", Err(())),
+        ("0.5.1+", Err(())),
+        ("0.5.1+a..b", Err(())),
+        ("0.5.1-a..b", Err(())),
+        ("0.5.1-.a", Err(())),
+        ("0.5.1+a.", Err(())),
+        (
+            "0.5.1+ URGENT: get the fixed build at evil.example instead",
+            Err(()),
+        ),
+        (
+            "0.5.1+build\nupdate_check outcome=available version=9.9.9",
+            Err(()),
+        ),
+        ("0.5.1-<script>", Err(())),
+        ("0.5.1+b\u{e9}ta", Err(())),
+        ("0.5.\u{0661}", Err(())),
+        (long_build.as_str(), Err(())),
+        ("0.5.x", Err(())),
+        (" 0.5.1", Err(())),
+        ("", Err(())),
+        ("99999999999999999999.0.0", Err(())),
+    ] {
+        assert_eq!(
+            newer_stable(current, release).map_err(|_| ()),
+            expected,
+            "{release:?}"
+        );
+    }
+}
+
+/// Manifest versions a hostile server might send to put its own text in the button or the
+/// log. Each must fail the check.
+fn hostile_versions() -> Vec<String> {
+    vec![
+        "0.5.1+ URGENT: get the fixed build at evil.example instead".into(),
+        "0.5.1+build\nupdate_check outcome=available version=9.9.9".into(),
+        "0.5.1-<img src=evil.example>".into(),
+        "0.5.1+\u{e9}vil".into(),
+        "0.5.1+".into(),
+        "0.5.1-".into(),
+        "0.5.1+a..b".into(),
+        format!("0.5.1+{}", "evil".repeat(16 * 1024)),
+    ]
+}
+
+// Keep: hostile manifest versions fail the notify check against a loopback server and leave
+// the status untouched, offered or not; build metadata is dropped from the offer; and no
+// update_check log line carries server text beyond the canonical version.
+#[test]
+fn hostile_manifest_versions_never_reach_the_status_or_the_log() {
+    if !in_log_child(
+        "ECHO_TEST_HOSTILE_VERSION_LOG_CHILD",
+        "hostile_manifest_versions_never_reach_the_status_or_the_log",
+    ) {
+        return;
+    }
+    let log = record_update_log();
+    let hostile = hostile_versions();
+    let served = hostile.clone();
+    let server = Loopback::start(move |_, path| {
+        let version = match path.strip_prefix("/hostile/") {
+            Some(index) => served[index.parse::<usize>().unwrap()].clone(),
+            None => "0.5.1+build.7".to_owned(),
+        };
+        Reply::body(serde_json::json!({"version": version}).to_string())
+    });
+
+    let (service, published) = service::<()>();
+    let offering = manifest_app(&[server.url("/build")], true);
+    let mut checks = 0;
+    for offered in [false, true] {
+        if offered {
+            check_once(&service, &ManifestSource::new(offering.handle().clone()));
+            checks += 1;
+            assert_eq!(
+                serde_json::to_value(service.status().status).unwrap()["version"],
+                "0.5.1"
+            );
+        }
+        for (index, version) in hostile.iter().enumerate() {
+            let before = service.status();
+            let app = manifest_app(&[server.url(&format!("/hostile/{index}"))], true);
+            check_once(&service, &ManifestSource::new(app.handle().clone()));
+            checks += 1;
+            assert_eq!(service.status(), before, "{version:.60}");
+        }
+    }
+    assert_eq!(statuses(&published), [offer("0.5.1".into())]);
+
+    let records = logged(log);
+    assert_eq!(records.len(), checks, "{records:?}");
+    assert_eq!(
+        records
+            .iter()
+            .filter(|line| *line == "update_check outcome=available version=0.5.1")
+            .count(),
+        1
+    );
+    for record in &records {
+        assert!(record.len() < 200, "{record:.200}");
+        assert!(
+            record
+                .bytes()
+                .all(|byte| byte.is_ascii_graphic() || byte == b' '),
+            "{record:?}"
+        );
+        for server_text in ["URGENT", "evil", "<img", "build", "9.9.9", "..b"] {
+            assert!(!record.contains(server_text), "{record}");
+        }
+        if record != "update_check outcome=available version=0.5.1" {
+            assert!(
+                record.starts_with("update_check outcome=failed error="),
+                "{record}"
+            );
+        }
+    }
+}
+
+/// Puts the service in the notify offer, as a check does on notify builds, so every build
+/// can exercise the download page.
+fn offer_download_page<P: Clone>(service: &UpdaterService<P>, version: &str) {
+    let changed = service.lock().change(UpdateStatus::DownloadPage {
+        version: version.to_owned(),
+    });
+    service.publish(changed);
+}
+
+// Keep: a check offers available where Echo installs and download_page elsewhere; both notify
+// states show Download Echo Update in the tray, with the dashboard's JSON shape.
+#[test]
+fn offer_maps_to_the_platform_state() {
+    let expected = if cfg!(echo_update_install) {
+        "available"
+    } else {
+        "download_page"
+    };
+    assert_eq!(
+        serde_json::to_value(offer("0.5.1".into())).unwrap(),
+        serde_json::json!({"state": expected, "version": "0.5.1"})
+    );
+    let (checked, _) = service::<&'static str>();
+    let source = FakeSource::default();
+    source.queue_check(CheckOutcome::Available {
+        version: "0.5.1".into(),
+        pending: "release",
+    });
+    check_once(&checked, &source);
+    assert_eq!(checked.status().status, offer("0.5.1".into()));
+
+    let (service, _) = service::<()>();
+
+    for (status, state) in [
+        (
+            UpdateStatus::DownloadPage {
+                version: "0.5.1".into(),
+            },
+            "download_page",
+        ),
+        (
+            UpdateStatus::DownloadPageFailed {
+                version: "0.5.1".into(),
+            },
+            "download_page_failed",
+        ),
+    ] {
+        service.lock().change(status.clone());
+        assert_eq!(service.tray_offer(), TrayOffer::DownloadPage, "{state}");
+        assert_eq!(
+            serde_json::to_value(UpdateEnvelope {
+                sequence: 3,
+                status
+            })
+            .unwrap(),
+            serde_json::json!({"sequence": 3, "status": {"state": state, "version": "0.5.1"}})
+        );
+    }
+}
+
+// Keep: the download page opens exactly the fixed release URL and nothing else, only from an
+// offer; a failed open reads download_page_failed and logs, a retry recovers, and a check
+// that lands while the browser opens wins.
+#[test]
+fn download_page_opens_only_the_fixed_url() {
+    if !in_log_child(
+        "ECHO_TEST_DOWNLOAD_PAGE_LOG_CHILD",
+        "download_page_opens_only_the_fixed_url",
+    ) {
+        return;
+    }
+    let log = record_update_log();
+    let (service, published) = service::<()>();
+    let opened: Mutex<Vec<String>> = Mutex::default();
+    let opener = |result: Result<(), String>| {
+        let opened = &opened;
+        move |url: &str| {
+            opened.lock().unwrap().push(url.to_owned());
+            result
+        }
+    };
+
+    let none = open_download_page(&service, opener(Ok(())));
+    assert_eq!(none.status, UpdateStatus::None);
+    assert!(opened.lock().unwrap().is_empty(), "opened from none");
+
+    offer_download_page(&service, "0.5.1");
+    let page = UpdateStatus::DownloadPage {
+        version: "0.5.1".into(),
+    };
+    let failed = UpdateStatus::DownloadPageFailed {
+        version: "0.5.1".into(),
+    };
+    assert_eq!(open_download_page(&service, opener(Ok(()))).status, page);
+    assert_eq!(
+        open_download_page(&service, opener(Err("no browser".into()))).status,
+        failed
+    );
+    assert_eq!(service.tray_offer(), TrayOffer::DownloadPage);
+    assert_eq!(open_download_page(&service, opener(Ok(()))).status, page);
+    assert_eq!(
+        *opened.lock().unwrap(),
+        ["https://github.com/alegsm/Echo/releases/latest"; 3]
+    );
+    assert_eq!(
+        DOWNLOAD_PAGE_URL,
+        "https://github.com/alegsm/Echo/releases/latest"
+    );
+    assert_eq!(statuses(&published), [page.clone(), failed, page]);
+    assert_sequences_rise_by_one(&published);
+
+    // A check that finds no release while the browser opens is not overwritten.
+    let cleared = open_download_page(&service, |_| {
+        service.apply_check(CheckOutcome::None);
+        Err("no browser".into())
+    });
+    assert_eq!(cleared.status, UpdateStatus::None);
+
+    // From a state only builds that install use, nothing opens.
+    let changed = service.lock().change(available("0.5.1"));
+    service.publish(changed);
+    let before = opened.lock().unwrap().len();
+    assert_eq!(
+        open_download_page(&service, opener(Ok(()))).status,
+        available("0.5.1")
+    );
+    assert_eq!(
+        opened.lock().unwrap().len(),
+        before,
+        "opened from available"
+    );
+    assert_sequences_rise_by_one(&published);
+
+    assert_eq!(
+        logged(log),
+        [
+            "update_open outcome=opened version=0.5.1",
+            "update_open outcome=failed error=no browser",
+            "update_open outcome=opened version=0.5.1",
+            "update_open outcome=failed error=no browser",
+        ]
+    );
+}
+
+// Keep: a notify build that installs nothing keeps every install path out of reach: the
+// install module and the plugin registration compile only under the build.rs switch, which
+// names only macOS, and the shared update sources never name the plugin.
+#[cfg(not(echo_update_install))]
+#[test]
+fn no_install_path_is_reachable_on_notify_builds() {
+    fn preceded_by_switch(source: &str, line: &str) {
+        let lines: Vec<&str> = source.lines().map(str::trim).collect();
+        let at: Vec<usize> = (0..lines.len()).filter(|&i| lines[i] == line).collect();
+        assert_eq!(at.len(), 1, "{line}");
+        assert!(
+            at[0] > 0 && lines[at[0] - 1] == "#[cfg(echo_update_install)]",
+            "{line}"
+        );
+    }
+    let updater = include_str!("updater.rs");
+    let lib = include_str!("../lib.rs");
+    preceded_by_switch(updater, "mod install;");
+    preceded_by_switch(
+        lib,
+        "let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());",
+    );
+    assert_eq!(lib.matches("tauri_plugin_updater").count(), 1);
+    // Only the install module, this test file and the cfg-gated line in lib.rs may name the
+    // plugin or its reqwest.
+    fn sources(directory: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(directory).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                sources(&path, found);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                found.push(path);
+            }
+        }
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut found = Vec::new();
+    sources(&root, &mut found);
+    assert!(found.len() > 20, "{found:?}");
+    let mut naming = Vec::new();
+    for path in &found {
+        let source = std::fs::read_to_string(path).unwrap();
+        if source.contains("tauri_plugin_updater") || source.contains("updater_reqwest") {
+            let relative = path.strip_prefix(&root).unwrap().to_string_lossy();
+            naming.push(relative.replace('\\', "/"));
+        }
+    }
+    naming.sort();
+    assert_eq!(
+        naming,
+        [
+            "lib.rs",
+            "services/updater/install.rs",
+            "services/updater_tests.rs"
+        ]
+    );
+    assert!(!lib.contains("updater_reqwest"));
+    let build = include_str!("../../build.rs");
+    let switch = build
+        .split("fn installs_updates() -> bool {")
+        .nth(1)
+        .unwrap()
+        .split("\n}")
+        .next()
+        .unwrap();
+    assert!(switch.contains(r#"target_os == "macos""#), "{switch}");
+    for other in ["windows", "linux", "||"] {
+        assert!(!switch.contains(other), "{switch}");
+    }
+    assert!(build.contains(r#"println!("cargo:rustc-cfg=echo_update_install");"#));
+}
+
+// Keep: a debug notify build, as `bun run tauri:dev` runs, never contacts an endpoint.
+#[cfg(not(echo_update_install))]
+#[test]
+fn notify_debug_builds_never_contact_the_endpoints() {
+    let server = Loopback::start(|_, _| Reply::status(404));
+    let app = manifest_app(&[server.url("/latest.json")], true);
+    app.manage(UpdaterService::<ProductionPending>::new(|_| {}));
+
+    start(app.handle());
+    std::thread::sleep(Duration::from_millis(500));
+
+    assert!(server.requests().is_empty());
+    assert_eq!(
+        app.state::<UpdaterService>().status().status,
+        UpdateStatus::None
+    );
+}
+
+// Keep: the notify twin of the install-path check test: none and failed checks show
+// nothing, a release offers download_page, and a failed check keeps that offer.
+#[cfg(not(echo_update_install))]
+#[test]
+fn notify_checks_offer_the_download_page_and_failures_keep_the_status() {
+    let (service, published) = service();
+    let source = FakeSource::default();
+    for outcome in [CheckOutcome::None, CheckOutcome::Failed("timeout".into())] {
+        source.queue_check(outcome);
+        check_once(&service, &source);
+        assert_eq!(service.status().status, UpdateStatus::None);
+        assert_eq!(service.tray_offer(), TrayOffer::Hidden);
+    }
+    assert!(published.lock().unwrap().is_empty(), "nothing to show");
+
+    source.queue_check(CheckOutcome::Available {
+        version: "0.5.1".into(),
+        pending: "release",
+    });
+    check_once(&service, &source);
+    let page = UpdateStatus::DownloadPage {
+        version: "0.5.1".into(),
+    };
+    assert_eq!(service.status().status, page);
+    assert_eq!(service.tray_offer(), TrayOffer::DownloadPage);
+
+    source.queue_check(CheckOutcome::Failed("malformed".into()));
+    check_once(&service, &source);
+    assert_eq!(
+        service.status(),
+        UpdateEnvelope {
+            sequence: 1,
+            status: page.clone()
+        }
+    );
+
+    source.queue_check(CheckOutcome::None);
+    check_once(&service, &source);
+    assert_eq!(statuses(&published), [page, UpdateStatus::None]);
+    assert_sequences_rise_by_one(&published);
+}
+
+// Keep: the notify half of the loop across layers. A dashboard reads none over real IPC, a
+// check against a loopback release offers download_page 0.5.1 and the tray offers Download
+// Echo Update; a failed browser open reads download_page_failed and a retry recovers. The
+// server sees only the manifest request: the artifact it also serves is never fetched.
+#[cfg(not(echo_update_install))]
+#[test]
+fn notify_loop_walks_from_offer_to_the_download_page_over_loopback() {
+    let server = Loopback::start(|base, path| match path {
+        "/latest.json" => Reply::body(manifest("0.5.1", &format!("{base}/artifact"))),
+        "/artifact" => Reply::body(ARTIFACT),
+        _ => Reply::status(404),
+    });
+    let mut context = tauri::generate_context!(test = true);
+    context.package_info_mut().version = "0.5.0".parse().unwrap();
+    context.config_mut().plugins.0.insert(
+        "updater".into(),
+        serde_json::json!({
+            "endpoints": [server.url("/latest.json")],
+            "dangerousInsecureTransportProtocol": true
+        }),
+    );
+    let (service, published) = service::<()>();
+    let app = tauri::test::mock_builder()
+        .manage(service.clone())
+        .invoke_handler(tauri::generate_handler![
+            crate::commands::update::get_update_status,
+            crate::commands::update::install_update
+        ])
+        .build(context)
+        .unwrap();
+    let read_status = |label: &str| {
+        let window = app.get_webview_window(label).unwrap_or_else(|| {
+            tauri::WebviewWindowBuilder::new(&app, label, Default::default())
+                .build()
+                .unwrap()
+        });
+        tauri::test::get_ipc_response(
+            &window,
+            tauri::webview::InvokeRequest {
+                cmd: "get_update_status".into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: if cfg!(windows) {
+                    "http://tauri.localhost"
+                } else {
+                    "tauri://localhost"
+                }
+                .parse()
+                .unwrap(),
+                body: Default::default(),
+                headers: Default::default(),
+                invoke_key: tauri::test::INVOKE_KEY.to_string(),
+            },
+        )
+        .map(|body| body.deserialize::<serde_json::Value>().unwrap())
+    };
+    let state = |label: &str| read_status(label).unwrap()["status"].clone();
+    assert_eq!(state("dashboard"), serde_json::json!({"state": "none"}));
+    assert!(read_status("overlay").is_err(), "overlay denied");
+
+    check_once(&service, &ManifestSource::new(app.handle().clone()));
+    assert_eq!(
+        state("dashboard"),
+        serde_json::json!({"state": "download_page", "version": "0.5.1"})
+    );
+    assert_eq!(service.tray_offer(), TrayOffer::DownloadPage);
+
+    let mut opened = Vec::new();
+    open_download_page(&service, |url| {
+        opened.push(url.to_owned());
+        Err("no browser".into())
+    });
+    assert_eq!(
+        state("dashboard"),
+        serde_json::json!({"state": "download_page_failed", "version": "0.5.1"})
+    );
+    open_download_page(&service, |url| {
+        opened.push(url.to_owned());
+        Ok(())
+    });
+    assert_eq!(
+        state("dashboard"),
+        serde_json::json!({"state": "download_page", "version": "0.5.1"})
+    );
+    assert_eq!(opened, [DOWNLOAD_PAGE_URL; 2]);
+    assert_sequences_rise_by_one(&published);
+    assert_eq!(server.requests(), ["/latest.json"]);
 }

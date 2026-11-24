@@ -1,7 +1,8 @@
 //! Background mode: whether a dashboard close hides or quits, whether the dashboard
 //! shows at launch, whether Echo shows in the macOS Dock, and the tray icon that brings
-//! the dashboard back while it is hidden and offers Update Echo when
-//! services/updater.rs has a release.
+//! the dashboard back while it is hidden and offers the release services/updater.rs
+//! found: Update Echo on builds that install, Download Echo Update on builds that only
+//! open the download page.
 
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
@@ -9,7 +10,7 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager};
 
 use crate::services::runtime::EchoRuntime;
-use crate::services::updater::{self, TrayOffer};
+use crate::services::updater::{self, TrayOffer, UpdateStatus};
 
 /// Marks a launch started by the OS at login. Login registration must pass this exact
 /// argument; it can only keep the dashboard hidden.
@@ -110,7 +111,11 @@ pub fn handle_menu_event(app: &AppHandle, event: MenuEvent) {
     match event.id().as_ref() {
         OPEN_MENU_ID => show_dashboard(app),
         UPDATE_MENU_ID => {
-            updater::request_install(app);
+            // A browser that could not open leaves the address in the dashboard, so show it.
+            let requested = updater::request_update(app);
+            if matches!(requested.status, UpdateStatus::DownloadPageFailed { .. }) {
+                show_dashboard(app);
+            }
         }
         QUIT_MENU_ID => app.exit(0),
         _ => {}
@@ -145,6 +150,9 @@ fn tray_entries(offer: TrayOffer) -> Vec<TrayEntry> {
         TrayOffer::Hidden => {}
         TrayOffer::Enabled => entries.push(item(UPDATE_MENU_ID, "Update Echo", true)),
         TrayOffer::Disabled => entries.push(item(UPDATE_MENU_ID, "Updating Echo…", false)),
+        TrayOffer::DownloadPage => {
+            entries.push(item(UPDATE_MENU_ID, "Download Echo Update", true));
+        }
     }
     entries.push(TrayEntry::Separator);
     entries.push(item(QUIT_MENU_ID, "Quit Echo", true));

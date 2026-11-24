@@ -12,11 +12,13 @@ pub fn get_update_status<R: Runtime>(window: WebviewWindow<R>) -> Result<UpdateE
     Ok(window.state::<UpdaterService>().status())
 }
 
-/// Returns once the request is admitted or ignored; the download continues natively.
+/// The sidebar button's request. Builds that install start the download and return once it
+/// is admitted or ignored, while the download continues natively; notify builds open the
+/// release page in the browser and return the resulting status.
 #[tauri::command]
 pub fn install_update<R: Runtime>(window: WebviewWindow<R>) -> Result<UpdateEnvelope, String> {
     require_dashboard(&window)?;
-    Ok(updater::request_install(window.app_handle()))
+    Ok(updater::request_update(window.app_handle()))
 }
 
 #[cfg(test)]
@@ -27,12 +29,12 @@ mod tests {
     use tauri::Manager;
 
     use super::{get_update_status, install_update};
-    use crate::services::updater::UpdaterService;
+    use crate::services::updater::{self, UpdaterService};
 
     /// Built from the real tauri.conf.json and capabilities, so the real ACL decides.
     fn app() -> tauri::App<MockRuntime> {
         mock_builder()
-            .manage(UpdaterService::<tauri_plugin_updater::Update>::new(|_| {}))
+            .manage(UpdaterService::<updater::ProductionPending>::new(|_| {}))
             .invoke_handler(tauri::generate_handler![get_update_status, install_update])
             .build(tauri::generate_context!(test = true))
             .unwrap()

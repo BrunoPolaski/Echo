@@ -36,6 +36,7 @@ impl Drop for DeliveryPermit {
 }
 
 /// Running while any delivery or explicit Copy holds a permit.
+#[cfg_attr(not(echo_update_install), allow(dead_code))]
 pub fn activity() -> Activity {
     if PENDING_DELIVERIES.load(Ordering::SeqCst) > 0 {
         return Activity::Running;

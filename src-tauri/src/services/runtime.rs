@@ -23,6 +23,7 @@ impl fmt::Display for RuntimeError {
 impl std::error::Error for RuntimeError {}
 
 /// Whether work that an update install must wait for is running, and when it last ended.
+#[cfg_attr(not(echo_update_install), allow(dead_code))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Activity {
     Running,
@@ -315,6 +316,7 @@ impl EchoRuntime {
 
     /// Capture phases other than Idle and active jobs are running work; the time is
     /// recorded natively when a capture returns to Idle and when a job settles.
+    #[cfg_attr(not(echo_update_install), allow(dead_code))]
     pub fn activity(&self) -> Result<Activity, RuntimeError> {
         let inner = self.lock()?;
         if inner.capture_phase != CapturePhase::Idle || !inner.active_jobs.is_empty() {

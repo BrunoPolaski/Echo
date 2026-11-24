@@ -140,12 +140,14 @@ impl DesktopAudioCapture {
     }
 
     /// True while a capture reservation or session exists.
+    #[cfg_attr(not(echo_update_install), allow(dead_code))]
     pub fn has_reservation(&self) -> bool {
         self.inner.gate.pending().is_some()
     }
 
     /// While set, every new reservation is refused with `UpdateInstalling`.
     /// Set it before reading `has_reservation`, mirroring the order in `reserve`.
+    #[cfg_attr(not(echo_update_install), allow(dead_code))]
     pub fn set_install_barrier(&self, closed: bool) {
         self.inner.install_barrier.store(closed, Ordering::SeqCst);
     }

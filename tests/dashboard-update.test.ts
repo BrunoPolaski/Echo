@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { clientHarness } from './helpers/mount-svelte';
 import { sourcePath } from './helpers/render-svelte';
-import { createUpdateController, type UpdateView } from '../src/lib/ui/dashboard/nav/update-controller';
+import { createUpdateController, updateAnnouncement, updateBusy, updateDescription, updateLabel, type UpdateView } from '../src/lib/ui/dashboard/nav/update-controller';
 import type { UpdateClient, UpdateEnvelope } from '../src/lib/runtime/desktop/update-client';
 
 const appVersion: string = (await Bun.file(new URL('../package.json', import.meta.url)).json()).version;
@@ -160,4 +160,93 @@ test('controller drops a status read older than an event it already applied', as
   expect(state.view).toEqual({ kind: 'available', version: '0.5.1' });
   stop();
   expect(calls).toEqual(['listen', 'status', 'unlisten']);
+});
+
+// Keep: a notify build's sidebar loop: the offer opens the download page through the same command,
+// a failed browser open shows the address and announces it, and a retry sends the request again.
+test('sidebar download button on a notify build opens the download page and shows the address when it cannot', async () => {
+  const nav = await mountNav({ tauri: true });
+  try {
+    nav.emit({ sequence: 2, status: { state: 'download_page', version: '0.5.1' } });
+    const offer = 'Download Echo v0.5.1';
+    const instruction = 'Opens the download page in your browser; run the installer there to update';
+    const description = () => nav.harness.target.querySelector('#update-description');
+    expect(nav.button()!.getAttribute('aria-label')).toBe(offer);
+    expect(nav.button()!.getAttribute('title')).toBe(`${offer}. ${instruction}`);
+    expect(nav.button()!.getAttribute('aria-describedby')).toBe('update-description');
+    expect(description()!.textContent).toBe(instruction);
+    expect(nav.button()!.getAttribute('aria-disabled')).toBeNull();
+    expect(nav.button()!.classList.contains('failed')).toBe(false);
+    expect(nav.button()!.querySelector('path')!.getAttribute('d')).toBe('M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19h14');
+    expect(nav.button()!.querySelector('.ring-arc')).toBeNull();
+    expect(nav.version().classList.contains('has-update')).toBe(true);
+    expect(nav.announcement()).toBe('');
+
+    nav.respondToInstall({ sequence: 3, status: { state: 'download_page_failed', version: '0.5.1' } });
+    await nav.click();
+    expect(nav.installs()).toEqual([['install_update', {}]]);
+    const failed = 'Could not open your browser. Download Echo v0.5.1 from github.com/alegsm/Echo/releases';
+    expect(nav.button()!.getAttribute('aria-label')).toBe(failed);
+    expect(nav.button()!.getAttribute('title')).toBe(failed);
+    expect(nav.button()!.getAttribute('aria-describedby')).toBeNull();
+    expect(description()).toBeNull();
+    expect(nav.button()!.getAttribute('aria-disabled')).toBeNull();
+    expect(nav.button()!.classList.contains('failed')).toBe(true);
+    expect(nav.button()!.querySelector('path')!.getAttribute('d')).toBe('M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19h14');
+    expect(nav.announcement()).toBe(failed);
+
+    nav.respondToInstall({ sequence: 4, status: { state: 'download_page', version: '0.5.1' } });
+    await nav.click();
+    expect(nav.installs()).toHaveLength(2);
+    expect(nav.button()!.getAttribute('aria-label')).toBe(offer);
+    expect(description()!.textContent).toBe(instruction);
+    expect(nav.button()!.classList.contains('failed')).toBe(false);
+    expect(nav.announcement()).toBe('');
+
+    nav.emit({ sequence: 5, status: { state: 'none' } });
+    expect(nav.button()).toBeNull();
+    expect(nav.version().classList.contains('has-update')).toBe(false);
+  } finally { await nav.harness.cleanup(); }
+});
+
+// Keep: the notify views' copy and request rules, and that the install views keep theirs.
+test('controller labels the download page views and requests from both', async () => {
+  const page: UpdateView = { kind: 'download_page', version: '0.5.1' };
+  const failed: UpdateView = { kind: 'download_page_failed', version: '0.5.1' };
+  expect(updateLabel(page)).toBe('Download Echo v0.5.1');
+  expect(updateDescription(page)).toBe('Opens the download page in your browser; run the installer there to update');
+  expect(updateDescription(failed)).toBe('');
+  expect(updateDescription({ kind: 'available', version: '0.5.1' })).toBe('');
+  expect(updateLabel(failed)).toBe('Could not open your browser. Download Echo v0.5.1 from github.com/alegsm/Echo/releases');
+  expect(updateAnnouncement(page)).toBe('');
+  expect(updateAnnouncement(failed)).toBe(updateLabel(failed));
+  expect(updateBusy(page)).toBe(false);
+  expect(updateBusy(failed)).toBe(false);
+  expect(updateLabel({ kind: 'available', version: '0.5.1' })).toBe('Update Echo to v0.5.1');
+  expect(updateLabel({ kind: 'failed', version: '0.5.1' })).toBe('Update failed. Try again');
+
+  const responses: UpdateEnvelope[] = [
+    { sequence: 2, status: { state: 'download_page_failed', version: '0.5.1' } },
+    { sequence: 3, status: { state: 'download_page', version: '0.5.1' } }
+  ];
+  let installs = 0;
+  const client: UpdateClient = {
+    async listen() { return () => {}; },
+    async status() { return { sequence: 0, status: { state: 'none' } }; },
+    async install() { installs++; return responses.shift()!; }
+  };
+  const state: { view: UpdateView } = { view: page };
+  const controller = createUpdateController(client, state);
+  await controller.install();
+  expect(installs).toBe(1);
+  expect(state.view).toEqual(failed);
+  await controller.install();
+  expect(installs).toBe(2);
+  expect(state.view).toEqual(page);
+
+  for (const view of [{ kind: 'hidden' }, { kind: 'waiting', version: '0.5.1' }, { kind: 'installing', version: '0.5.1' }] as UpdateView[]) {
+    state.view = view;
+    await controller.install();
+  }
+  expect(installs).toBe(2);
 });

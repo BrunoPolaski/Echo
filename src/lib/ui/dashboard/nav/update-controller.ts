@@ -3,10 +3,13 @@ import type { UpdateClient, UpdateEnvelope, UpdateStatus } from '#lib/runtime/de
 /** What the sidebar button shows. `percent` is null while the download size is unknown. */
 export type UpdateView =
   | { kind: 'hidden' }
-  | { kind: 'available' | 'waiting' | 'installing' | 'failed'; version: string }
+  | { kind: 'available' | 'waiting' | 'installing' | 'failed' | 'download_page' | 'download_page_failed'; version: string }
   | { kind: 'downloading'; version: string; percent: number | null };
 
 type UpdateState = { view: UpdateView };
+
+/** The views whose button sends a request: an offer or a failure, on either kind of build. */
+const requestable = new Set<UpdateView['kind']>(['available', 'failed', 'download_page', 'download_page_failed']);
 
 function viewOf(status: UpdateStatus): UpdateView {
   switch (status.state) {
@@ -29,15 +32,23 @@ export function updateLabel(view: Exclude<UpdateView, { kind: 'hidden' }>) {
     case 'waiting': return `Echo v${view.version} installs when this dictation ends`;
     case 'installing': return `Installing Echo v${view.version}`;
     case 'failed': return 'Update failed. Try again';
+    case 'download_page': return `Download Echo v${view.version}`;
+    case 'download_page_failed': return `Could not open your browser. Download Echo v${view.version} from github.com/alegsm/Echo/releases`;
   }
 }
 
-/** Live-region text: the download start, the wait and the failure, never each percent. */
+/** Supplementary text for the button's tooltip and description, never part of its name. */
+export function updateDescription(view: UpdateView) {
+  return view.kind === 'download_page' ? 'Opens the download page in your browser; run the installer there to update' : '';
+}
+
+/** Live-region text: the download start, the wait and the failures, never each percent. */
 export function updateAnnouncement(view: UpdateView) {
   switch (view.kind) {
     case 'downloading': return `Downloading Echo v${view.version}`;
     case 'waiting':
-    case 'failed': return updateLabel(view);
+    case 'failed':
+    case 'download_page_failed': return updateLabel(view);
     default: return '';
   }
 }
@@ -60,13 +71,16 @@ export function createUpdateController(client: UpdateClient, state: UpdateState)
     state.view = viewOf(envelope.status);
   }
 
-  /** Requests the install from the available or failed state; native ignores any other request too. */
+  /**
+   * Requests the update from an offer or a failure: the install where Echo installs, the download page
+   * on notify builds. Native ignores any other request too.
+   */
   async function install() {
-    if (state.view.kind !== 'available' && state.view.kind !== 'failed') return;
+    if (!requestable.has(state.view.kind)) return;
     try {
       apply(await client.install());
     } catch {
-      // Native reports download and install failures as a `failed` status. A rejected request
+      // Native reports download, install and browser failures as a status. A rejected request
       // changed nothing natively, so the current offer stays and the user can activate it again.
     }
   }
