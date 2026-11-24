@@ -47,7 +47,8 @@ fn create_windows<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
     Ok(())
 }
 
-// tauri.conf.json creates the dashboard hidden, so a login launch never flashes it.
+// tauri.conf.json keeps the dashboard hidden when it is built, so a login launch never
+// flashes it.
 // The tray is applied first because a hidden start leaves the Dock only with a tray.
 fn show_tray_and_dashboard(app: &tauri::App) {
     let runtime = app.state::<EchoRuntime>();

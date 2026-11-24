@@ -209,7 +209,8 @@ fn bootstrap_opens_only_current_storage_without_restoring_other_directories() {
 
 // Keep: a renderer command that reads unmanaged state panics, and inside a WebView2
 // callback that panic aborts Echo. Tauri's own startup step must build no window from
-// tauri.conf.json; both appear only once startup has managed the state they read.
+// tauri.conf.json; create_windows builds both, and they then read the managed storage.
+// The order of the calls inside setup_application is not driven here.
 #[test]
 fn windows_are_created_only_after_startup_manages_command_state() {
     let path = test_database("window-order");
