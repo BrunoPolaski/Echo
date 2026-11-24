@@ -39,10 +39,21 @@ fn prefer_xwayland() {
     }
 }
 
+/// WebKitGTK's DMA-BUF renderer cannot allocate buffers on the proprietary NVIDIA driver and
+/// leaves every window blank.
+#[cfg(target_os = "linux")]
+fn disable_webkit_dmabuf_renderer() {
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[cfg(target_os = "linux")]
     prefer_xwayland();
+    #[cfg(target_os = "linux")]
+    disable_webkit_dmabuf_renderer();
     let context = tauri::generate_context!();
     let log_directory = bounded_log::platform_log_directory(&context.config().identifier)
         .expect("Echo log directory should be available");
