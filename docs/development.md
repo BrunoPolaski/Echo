@@ -115,13 +115,21 @@ Xvfb has only a synthetic keyboard, so that test proves the X11 protocol path, n
 
 ## Publish a release
 
-A release puts signed builds for both platforms on a GitHub release and, last, the `latest.json` manifest that installed copies of Echo read to offer the update. [Architecture](architecture.md#updates) describes the update client. Installed copies never downgrade, so a bad release is corrected only by a higher fixed version or a manual reinstall.
+A release puts signed builds for both platforms, their checksums and the `latest.json` manifest on a draft GitHub release, then publishes it. Installed copies of Echo read `latest.json` to offer the update. [Architecture](architecture.md#updates) describes the update client. Installed copies never downgrade, so a bad release is corrected only by a higher fixed version or a manual reinstall.
+
+**Immutable releases.** The repository has immutable releases turned on. Publishing locks the release's files and its tag: no file can be added, replaced or deleted afterwards, and the tag cannot be moved, deleted or reused. Only the title, the notes, the pre-release mark and the Latest mark can still change. Every file therefore goes on the draft, and the draft is checked before it is published. While it is a draft, `gh release upload --clobber` replaces any file.
 
 **Update key.** The release operator generates the update key pair once, at a hidden prompt, straight into 1Password; the key has no password. The public half replaces `ECHO_UPDATE_PUBLIC_KEY_NOT_SET` in `plugins.updater.pubkey` of [tauri.conf.json](../src-tauri/tauri.conf.json) in the release commit. While the placeholder is committed, [update-manifest.ts](../scripts/update-manifest.ts) and `build-windows.ps1 -Release` refuse to run. The macOS build does not read the pubkey; a macOS release is refused the same way when update-manifest.ts runs, so no manifest can offer it. The private key reaches a build only through the `TAURI_SIGNING_PRIVATE_KEY` environment variable, injected by the secret store, for example with 1Password CLI's `op run`. No script reads it from a file in the repository, prints it or passes it as an argument. `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` can stay unset: the Tauri CLI assumes an empty password and builds without a prompt.
 
 **Release overlay.** [tauri.release.conf.json](../src-tauri/tauri.release.conf.json) turns on `createUpdaterArtifacts`, which signs the updater artifact with the key. Only release and staging builds pass it with `--config`, so `bun run tauri:build --bundles app` and CI's `tauri build --ci --no-bundle` still succeed without a key.
 
-1. Set the same version in [package.json](../package.json), [tauri.conf.json](../src-tauri/tauri.conf.json) and [Cargo.toml](../src-tauri/Cargo.toml), then tag the commit `v<version>`.
+1. Set the same version in [package.json](../package.json), [tauri.conf.json](../src-tauri/tauri.conf.json) and [Cargo.toml](../src-tauri/Cargo.toml), then tag the commit `v<version>`, push the tag and create the draft release from it. Steps 2 to 5 upload to this draft. Push the tag only once the release commit is final: the tag ruleset blocks moving or deleting `v*` tags, so a fix found during the builds needs a new version.
+
+   ```sh
+   git push origin v<version>
+   gh release create v<version> --draft --verify-tag --title "Echo <version>" --notes-file <notes.md>
+   ```
+
 2. On an Apple Silicon Mac, build with the Developer ID identity for public releases:
 
    ```sh
@@ -136,22 +144,45 @@ A release puts signed builds for both platforms on a GitHub release and, last, t
    ```
 
    `-Release` builds the NSIS installer only, refuses a missing key or the placeholder pubkey, passes the release overlay and copies the signed installer to `Echo-windows-setup.exe` and `Echo-windows-setup.exe.sig` in `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis`. Upload both. A Windows build regenerates `src-tauri/gen/schemas/windows-schema.json`; a Mac build cannot. Commit that file from the Windows checkout when it changes, and never edit it by hand.
-4. Write `SHA256SUMS.txt` for the DMG, the tar.gz and the setup exe, and upload it:
+4. The builds come from two machines, so download the draft's files to one directory before writing anything that describes them. Then write `SHA256SUMS.txt` for the DMG, the tar.gz and the setup exe, and upload it:
 
    ```sh
-   shasum -a 256 Echo-macos.dmg Echo-macos.app.tar.gz Echo-windows-setup.exe > SHA256SUMS.txt
+   gh release download v<version> --dir <dir>
+   (cd <dir> && shasum -a 256 Echo-macos.dmg Echo-macos.app.tar.gz Echo-windows-setup.exe > SHA256SUMS.txt)
+   gh release upload v<version> <dir>/SHA256SUMS.txt
    ```
 
-5. Once both `.sig` files are on the published release, write the manifest and upload it last:
+5. Write the manifest from the two `.sig` files in `<dir>`, `Echo-macos.app.tar.gz.sig` and `Echo-windows-setup.exe.sig`, and upload it to the draft:
 
    ```sh
-   bun scripts/update-manifest.ts --tag v<version>
-   gh release upload v<version> latest.json
+   bun scripts/update-manifest.ts --tag v<version> --assets <dir>
+   gh release upload v<version> <dir>/latest.json
    ```
 
-   The script fetches both `.sig` files from `releases/download/<tag>/` and exits non-zero, writing nothing, when one is missing, when a signature's key id differs from the configured pubkey, when the pubkey is the placeholder or not a minisign public key, or when the tag is not exactly `v` followed by package.json's version. The manifest lists `darwin-aarch64` and `windows-x86_64` with URLs under `releases/download/<tag>/`. For a draft release, download the `.sig` files and pass `--assets <dir>`. A release with no `latest.json` offers nothing to installed copies, so a half-uploaded release is safe. Current Windows builds ignore the Windows `.sig` and the `windows-x86_64` entry, because they only open the releases page ([architecture](architecture.md#updates)); the scripts still produce and require both, for 0.5.0 installs, which install their own updates, and for signed builds once the switch includes Windows.
+   The script reads both `.sig` files from `<dir>`, because a draft's files have no public download URL yet; `gh release download` reads them with your login. It exits non-zero, writing nothing, when one is missing, when a signature's key id differs from the configured pubkey, when the pubkey is the placeholder or not a minisign public key, or when the tag is not exactly `v` followed by package.json's version. The manifest lists `darwin-aarch64` and `windows-x86_64` with URLs under `releases/download/<tag>/`, which resolve once the release is published. Current Windows builds ignore the Windows `.sig` and the `windows-x86_64` entry, because they only open the releases page ([architecture](architecture.md#updates)); the scripts still produce and require both, for 0.5.0 installs, which install their own updates, and for signed builds once the switch includes Windows.
+6. Check that the draft holds exactly the seven files:
 
-To replace an asset, upload the new file and its `.sig` with `gh release upload --clobber`, run the manifest script again and re-upload `latest.json` with `--clobber`. To stop offering a release, delete its `latest.json` with `gh release delete-asset v<version> latest.json`.
+   ```sh
+   gh release view v<version> --json isDraft,assets --jq '[.isDraft, (.assets | map(.name) | sort)]'
+   ```
+
+   It must print `true` and `Echo-macos.app.tar.gz`, `Echo-macos.app.tar.gz.sig`, `Echo-macos.dmg`, `Echo-windows-setup.exe`, `Echo-windows-setup.exe.sig`, `SHA256SUMS.txt` and `latest.json`. A file missing at publication cannot be added later. A published release without `latest.json` that is marked Latest leaves both update endpoints answering 404, so no installed copy is offered any update until another release is marked Latest.
+7. Publish the draft, mark it Latest and check GitHub's release attestation:
+
+   ```sh
+   gh release edit v<version> --draft=false --latest
+   gh release verify v<version>
+   ```
+
+   Publishing locks the files and the tag and records an attestation of the tag, the commit and each file's digest. If `gh release verify` finds no attestation straight after publishing, wait a minute and run it again. `gh release verify-asset v<version> <file>` checks a downloaded file against it.
+
+Before publication, replace a draft's file with `gh release upload --clobber`. After any build file or `.sig` changes, run steps 4 and 5 again with `gh release download --clobber`, so `<dir>` holds the new files, and replace `SHA256SUMS.txt` and `latest.json` with `--clobber`. A manifest written from an old `.sig` passes the key check but fails signature verification on every copy that installs the update once the release is published. A published release cannot be repaired. To stop offering it, mark the previous release Latest:
+
+```sh
+gh release edit v<previous version> --latest
+```
+
+Both update endpoints, the README's download links, echostt.app's download links and the Windows download button (`releases/latest`) follow the release marked Latest. Installed copies of the bad version keep it, because Echo never downgrades. Copies older than the previous version are offered the previous version. The bad release still heads the releases page, so add a warning to its notes or mark it pre-release; both stay editable. Ship the fix as a higher version, then mark that release Latest.
 
 ## Stage an update
 

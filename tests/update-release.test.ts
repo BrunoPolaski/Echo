@@ -116,7 +116,8 @@ describe('update-manifest.ts', () => {
   });
 
   const refusals: [string, string[], string, (tag: string) => string, RegExp][] = [
-    ['only the macOS .sig', [macSig], trustedPub, (tag) => tag, /windows-x86_64/],
+    // With --assets the refusal names the local directory, not the release.
+    ['only the macOS .sig', [macSig], trustedPub, (tag) => tag, /^(?!The release ).+ is missing the signature for windows-x86_64/],
     ['only the Windows .sig', [windowsSig], trustedPub, (tag) => tag, /darwin-aarch64/],
     ['a .sig from another key', [macSig, windowsSig], otherPub, (tag) => tag, /key 256B1FC0B0A30D1E.*0B09975660912D1A/],
     ['the placeholder pubkey', [macSig, windowsSig], PUBKEY_PLACEHOLDER, (tag) => tag, /placeholder/],
